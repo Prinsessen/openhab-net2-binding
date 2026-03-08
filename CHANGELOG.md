@@ -269,6 +269,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 ## Contact & Support
 
-- **Issues**: https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding/issues
+- **Issues**: https://github.com/Prinsessen/openhab-net2-binding/issues
 - **Email**: nanna@agesen.dk
 - **Community**: https://community.openhab.org/

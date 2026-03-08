@@ -5,7 +5,7 @@
 **Version:** 5.1.0  
 **Author:** Nanna Agesen (@Prinsessen)  
 **Email:** nanna@agesen.dk  
-**Repository:** https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding  
+**Repository:** https://github.com/Prinsessen/openhab-net2-binding  
 **License:** Eclipse Public License 2.0 (EPL-2.0)  
 
 ## Release Readiness Checklist
@@ -164,7 +164,7 @@
 | GitHub | @Prinsessen |
 | Email | nanna@agesen.dk |
 | GitHub Profile | https://github.com/Prinsessen |
-| Repository | https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding |
+| Repository | https://github.com/Prinsessen/openhab-net2-binding |
 | Timezone | Europe/Copenhagen |
 
 ## Support & Communication

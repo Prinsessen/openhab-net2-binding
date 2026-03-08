@@ -11,15 +11,15 @@ Thank you for your interest in contributing to the Paxton Net2 binding for openH
 
 ### Setting Up Development Environment
 
-1. Fork the repository: https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding
+1. Fork the repository: https://github.com/Prinsessen/openhab-net2-binding
 2. Clone your fork:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/Openhab-Paxton-NET2-Binding.git
-   cd Openhab-Paxton-NET2-Binding
+   git clone https://github.com/YOUR_USERNAME/openhab-net2-binding.git
+   cd openhab-net2-binding
    ```
 3. Add upstream remote:
    ```bash
-   git remote add upstream https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding.git
+   git remote add upstream https://github.com/Prinsessen/openhab-net2-binding.git
    ```
 
 ### Building

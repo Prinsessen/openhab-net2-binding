@@ -243,7 +243,7 @@ For issues or questions:
 ## Contributing
 
 Contributions are welcome! Please:
-1. Fork the [GitHub repository](https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding)
+1. Fork the [GitHub repository](https://github.com/Prinsessen/openhab-net2-binding)
 2. Create a feature branch
 3. Follow openHAB code style guidelines
 4. Include unit tests for new features
@@ -268,7 +268,7 @@ Terndrupvej 81, 9460 Brovst, Denmark
 **Nanna Agesen** (@Prinsessen)
 - Email: nanna@agesen.dk
 - GitHub: https://github.com/Prinsessen
-- Binding Repository: https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding
+- Binding Repository: https://github.com/Prinsessen/openhab-net2-binding
 
 ## Maintainer Information
 
@@ -277,7 +277,7 @@ Terndrupvej 81, 9460 Brovst, Denmark
 | Author | Nanna Agesen |
 | Email | nanna@agesen.dk |
 | GitHub | @Prinsessen |
-| Repository | https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding |
+| Repository | https://github.com/Prinsessen/openhab-net2-binding |
 | License | EPL-2.0 |
 | openHAB Minimum | 5.0.0 |
 | Java Minimum | 21 |

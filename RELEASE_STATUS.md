@@ -14,7 +14,7 @@
 | **GitHub Username** | @Prinsessen |
 | **Email** | nanna@agesen.dk |
 | **Timezone** | Europe/Copenhagen |
-| **Repository** | https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding |
+| **Repository** | https://github.com/Prinsessen/openhab-net2-binding |
 
 ---
 
@@ -157,7 +157,7 @@ The binding supports all 7 access levels from the Net2 system:
 
 ## GitHub Repository
 
-**URL:** https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding
+**URL:** https://github.com/Prinsessen/openhab-net2-binding
 
 | Item | Details |
 |------|---------|

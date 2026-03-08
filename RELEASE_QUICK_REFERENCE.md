@@ -14,7 +14,7 @@
 | **Author** | Nanna Agesen (@Prinsessen) |
 | **Email** | nanna@agesen.dk |
 | **License** | EPL-2.0 |
-| **Repository** | https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding |
+| **Repository** | https://github.com/Prinsessen/openhab-net2-binding |
 | **Documentation** | 10 comprehensive markdown files |
 | **Release Requirements** | 45+ items ALL ✓ COMPLETE |
 
@@ -96,7 +96,7 @@ All 7 access levels from Net2 system are supported:
 ## Repository Contents
 
 ```
-https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding
+https://github.com/Prinsessen/openhab-net2-binding
 
 ├── src/
 │   └── org/openhab/binding/net2/
@@ -163,7 +163,7 @@ e26d4eb - docs: comprehensive release status report - all 45+ requirements verif
 | **What openHAB versions?** | 5.1.0+ |
 | **License?** | EPL-2.0 (Eclipse Public License) |
 | **Author contact?** | nanna@agesen.dk (@Prinsessen) |
-| **Bug reports?** | https://github.com/Prinsessen/Openhab-Paxton-NET2-Binding/issues |
+| **Bug reports?** | https://github.com/Prinsessen/openhab-net2-binding/issues |
 
 ---
 
