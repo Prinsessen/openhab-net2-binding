@@ -48,6 +48,30 @@
 				<label>Refresh Interval</label>
 				<description>Door status polling interval in seconds</description>
 			</parameter>
+			<parameter name="autoReinstate" type="boolean" required="false">
+				<label>Auto Re-Instate</label>
+				<description>Re-instate an ACU by itself when it refuses known users (a Net2 fault that a
+					Re-Instate cures). Off: the lockout channel still turns ON.</description>
+				<default>false</default>
+			</parameter>
+			<parameter name="lockoutThreshold" type="integer" min="1" required="false">
+				<label>Lockout Threshold</label>
+				<description>Refusals of known users at one door, with no entry between, that mean a lockout</description>
+				<default>3</default>
+				<advanced>true</advanced>
+			</parameter>
+			<parameter name="lockoutWindow" type="integer" min="1" unit="min" required="false">
+				<label>Lockout Window</label>
+				<description>Minutes within which those refusals must fall</description>
+				<default>10</default>
+				<advanced>true</advanced>
+			</parameter>
+			<parameter name="reinstateInterval" type="integer" min="1" unit="min" required="false">
+				<label>Re-Instate Interval</label>
+				<description>Least minutes between two automatic re-instates of the same ACU while the lockout lasts</description>
+				<default>30</default>
+				<advanced>true</advanced>
+			</parameter>
 		</config-description>
 	</bridge-type>
 
@@ -68,6 +92,10 @@
 			<channel id="controlTimed" typeId="doorControlTimed"/>
 			<channel id="entryLog" typeId="entryLog"/>
 			<channel id="accessDenied" typeId="accessDenied"/>
+			<channel id="accessEvent" typeId="accessEvent"/>
+			<channel id="lockout" typeId="lockout"/>
+			<channel id="reinstate" typeId="reinstate"/>
+			<channel id="lastReinstate" typeId="lastReinstate"/>
 		</channels>
 
 		<config-description>
@@ -144,8 +172,9 @@
 	<channel-type id="entryLog">
 		<item-type>String</item-type>
 		<label>Entry Log</label>
-		<description>JSON-formatted entry event: {"firstName":"John","lastName":"Doe","doorName":"Front
-			Door","timestamp":"2026-01-10T18:04:01"}</description>
+		<description>JSON-formatted entry event, granted access only (event types 20 and 26):
+			{"firstName":"John","lastName":"Doe","doorName":"Front
+			Door","timestamp":"2026-01-10T18:04:01","doorId":6612642,"eventType":20,"eventSubType":0}</description>
 		<state readOnly="true"/>
 	</channel-type>
 
@@ -155,6 +184,37 @@
 		<description>JSON-formatted denied access event: {"tokenNumber":"4038310","doorName":"Front
 			Door","timestamp":"2026-01-16T17:09:14","doorId":6612642}</description>
 		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="accessEvent">
+		<item-type>String</item-type>
+		<label>Access Event</label>
+		<description>Every event that names a user, granted or refused, as JSON with the Net2 event type:
+			{"firstName":"John","lastName":"Doe","doorName":"Front
+			Door","timestamp":"2026-10-27T07:34:20","doorId":6203980,"eventType":112,"eventSubType":0}</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="lockout">
+		<item-type>Switch</item-type>
+		<label>ACU Lockout</label>
+		<description>ON when the ACU refuses known users (the bridge's lockoutThreshold refusals within
+			lockoutWindow minutes, no entry between); OFF at the next entry.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="lastReinstate">
+		<item-type>DateTime</item-type>
+		<label>Last Re-Instate</label>
+		<description>When the binding last sent a Re-Instate to this door's ACU</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="reinstate">
+		<item-type>Switch</item-type>
+		<label>Re-Instate ACU</label>
+		<description>ON sends Net2's Re-Instate to the ACU of this door (it sends the ACU its configuration
+			again). Cures an ACU that refuses every token and PIN. Falls back to OFF by itself.</description>
 	</channel-type>
 
 	<channel-type id="lockdown">

@@ -241,6 +241,25 @@ public class Net2ApiClient {
     }
 
     /**
+     * Re-instate the ACU behind a door: Net2's "Re-Instate", which sends the ACU its configuration
+     * again. It cures an ACU that suddenly refuses every token and PIN or runs its time schedules
+     * wrongly.
+     */
+    public boolean reinstate(int doorId) throws IOException, InterruptedException {
+        ensureTokenValid();
+
+        JsonObject body = new JsonObject();
+        body.addProperty("DoorId", doorId);
+
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/commands/door/reinstate"))
+                .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
+                .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        return response.statusCode() == 200;
+    }
+
+    /**
      * Close door
      */
     public boolean closeDoor(int doorId) throws IOException, InterruptedException {

@@ -369,6 +369,10 @@ public class Net2ServerHandler extends BaseBridgeHandler {
     /**
      * Get the API client for child door handlers
      */
+    public Net2ServerConfiguration getServerConfiguration() {
+        return getConfigAs(Net2ServerConfiguration.class);
+    }
+
     public @Nullable Net2ApiClient getApiClient() {
         return apiClient;
     }

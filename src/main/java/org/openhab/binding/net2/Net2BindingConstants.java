@@ -38,6 +38,10 @@ public class Net2BindingConstants {
     public static final String CHANNEL_LAST_ACCESS_TIME = "lastAccessTime";
     public static final String CHANNEL_ENTRY_LOG = "entryLog";
     public static final String CHANNEL_ACCESS_DENIED = "accessDenied";
+    public static final String CHANNEL_ACCESS_EVENT = "accessEvent";
+    public static final String CHANNEL_REINSTATE = "reinstate";
+    public static final String CHANNEL_LOCKOUT = "lockout";
+    public static final String CHANNEL_LAST_REINSTATE = "lastReinstate";
 
     // User management channels
     public static final String CHANNEL_CREATE_USER = "createUser";

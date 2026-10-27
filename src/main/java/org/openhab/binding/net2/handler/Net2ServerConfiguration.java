@@ -28,4 +28,8 @@ public class Net2ServerConfiguration {
     public String clientId = "";
     public Boolean tlsVerification = true;
     public Integer refreshInterval = 30;
+    public Boolean autoReinstate = false;
+    public Integer lockoutThreshold = 3;
+    public Integer lockoutWindow = 10;
+    public Integer reinstateInterval = 30;
 }

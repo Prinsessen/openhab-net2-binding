@@ -12,6 +12,10 @@
  */
 package org.openhab.binding.net2.handler;
 
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Set;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.openhab.binding.net2.Net2BindingConstants;
@@ -46,6 +50,7 @@ public class Net2DoorHandler extends BaseThingHandler {
 
     private @Nullable Net2ServerHandler bridgeHandler;
     private int doorId;
+    private final Net2LockoutGuard lockoutGuard = new Net2LockoutGuard();
 
     public Net2DoorHandler(Thing thing) {
         super(thing);
@@ -141,6 +146,9 @@ public class Net2DoorHandler extends BaseThingHandler {
                 case Net2BindingConstants.CHANNEL_DOOR_CONTROL_TIMED:
                     handleDoorControlTimed(command);
                     break;
+                case Net2BindingConstants.CHANNEL_REINSTATE:
+                    handleReinstate(command);
+                    break;
                 default:
                     logger.debug("Unsupported channel: {}", channelUID.getId());
             }
@@ -207,6 +215,54 @@ public class Net2DoorHandler extends BaseThingHandler {
         }
     }
 
+    private void applyLockoutResult(Net2LockoutGuard.Result result, String doorName) {
+        switch (result) {
+            case LOCKOUT:
+                updateState(Net2BindingConstants.CHANNEL_LOCKOUT, OnOffType.ON);
+                logger.warn("{}: known users are being refused - the ACU looks locked out (Re-Instate cures it)",
+                        doorName);
+                break;
+            case REINSTATE:
+                updateState(Net2BindingConstants.CHANNEL_LOCKOUT, OnOffType.ON);
+                logger.warn("{}: known users are being refused - re-instating the ACU", doorName);
+                try {
+                    reinstate();
+                } catch (Exception e) {
+                    logger.error("Re-instate of the ACU of door {} failed", doorId, e);
+                }
+                break;
+            case CLEARED:
+                updateState(Net2BindingConstants.CHANNEL_LOCKOUT, OnOffType.OFF);
+                logger.info("{}: access granted again - the lockout is over", doorName);
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void reinstate() throws Exception {
+        Net2ServerHandler bridge = bridgeHandler;
+        Net2ApiClient apiClient = bridge != null ? bridge.getApiClient() : null;
+        if (apiClient == null) {
+            logger.error("API client not available");
+            return;
+        }
+        if (apiClient.reinstate(doorId)) {
+            updateState(Net2BindingConstants.CHANNEL_LAST_REINSTATE, new DateTimeType());
+            logger.info("Re-instate sent to the ACU of door {}", doorId);
+        } else {
+            logger.error("Re-instate of the ACU of door {} was not accepted", doorId);
+        }
+    }
+
+    private void handleReinstate(Command command) throws Exception {
+        if (command != OnOffType.ON) {
+            return;
+        }
+        reinstate();
+        updateState(Net2BindingConstants.CHANNEL_REINSTATE, OnOffType.OFF);
+    }
+
     private void handleDoorAction(Command command) throws Exception {
         Net2ServerHandler bridge = bridgeHandler;
         if (bridge == null) {
@@ -240,6 +296,48 @@ public class Net2DoorHandler extends BaseThingHandler {
         }
     }
 
+    /** Net2 event types that let the user in: 20 = access permitted (token), 26 = access permitted (PIN). */
+    static final Set<Integer> ENTRY_EVENT_TYPES = Set.of(20, 26);
+
+    /**
+     * True when a LiveEvent is an entry. An event without an eventType counts as an entry, as it did
+     * before the type was read (older Net2 servers).
+     */
+    static boolean isEntry(JsonObject payload) {
+        if (!payload.has("eventType") || payload.get("eventType").isJsonNull()) {
+            return true;
+        }
+        return ENTRY_EVENT_TYPES.contains(payload.get("eventType").getAsInt());
+    }
+
+    /**
+     * The JSON for the entryLog and accessEvent channels: firstName, lastName, doorName, timestamp,
+     * doorId, eventType and eventSubType. The token number is left out: the user is already named.
+     */
+    static JsonObject buildAccessEvent(JsonObject payload, String doorName, int doorId) {
+        String fullName = payload.get("userName").getAsString();
+        String[] nameParts = fullName.split(" ", 2);
+        String lastName = nameParts.length > 0 ? nameParts[0] : "";
+        String firstName = nameParts.length > 1 ? nameParts[1] : "";
+        String timestamp = payload.has("eventTime") && !payload.get("eventTime").isJsonNull()
+                ? payload.get("eventTime").getAsString()
+                : "";
+
+        JsonObject event = new JsonObject();
+        event.addProperty("firstName", firstName);
+        event.addProperty("lastName", lastName);
+        event.addProperty("doorName", doorName);
+        event.addProperty("timestamp", timestamp);
+        event.addProperty("doorId", doorId);
+        if (payload.has("eventType") && !payload.get("eventType").isJsonNull()) {
+            event.addProperty("eventType", payload.get("eventType").getAsInt());
+        }
+        if (payload.has("eventSubType") && !payload.get("eventSubType").isJsonNull()) {
+            event.addProperty("eventSubType", payload.get("eventSubType").getAsInt());
+        }
+        return event;
+    }
+
     public int getDoorId() {
         return doorId;
     }
@@ -259,28 +357,34 @@ public class Net2DoorHandler extends BaseThingHandler {
                         new StringType(payload.get("userName").getAsString()));
             }
 
-            // Generate entry log event for LiveEvents with userName
+            // Every LiveEvent that names a user goes to accessEvent with its event type, so a rule can
+            // tell a refusal from an entry. Only the granted types become an entryLog entry: a refused
+            // badge is not an entry, and Net2 can refuse every user at once until the ACU is re-instated
+            // in the Net2 software (seen 2026-10-27 as eventType 112 for every token and PIN).
             if (("LiveEvents".equalsIgnoreCase(target) || "liveEvents".equalsIgnoreCase(target))
                     && payload.has("userName") && !payload.get("userName").isJsonNull()) {
 
-                String fullName = payload.get("userName").getAsString();
-                String[] nameParts = fullName.split(" ", 2);
-                String lastName = nameParts.length > 0 ? nameParts[0] : "";
-                String firstName = nameParts.length > 1 ? nameParts[1] : "";
+                String label = getThing().getLabel();
+                String doorName = label != null ? label : "Door " + doorId;
+                JsonObject accessEvent = buildAccessEvent(payload, doorName, doorId);
+                updateState(Net2BindingConstants.CHANNEL_ACCESS_EVENT, new StringType(accessEvent.toString()));
 
-                String doorName = getThing().getLabel() != null ? getThing().getLabel() : "Door " + doorId;
-                String timestamp = payload.has("eventTime") ? payload.get("eventTime").getAsString() : "";
-
-                // Build JSON entry log
-                JsonObject entryLog = new JsonObject();
-                entryLog.addProperty("firstName", firstName);
-                entryLog.addProperty("lastName", lastName);
-                entryLog.addProperty("doorName", doorName);
-                entryLog.addProperty("timestamp", timestamp);
-                entryLog.addProperty("doorId", doorId);
-
-                updateState(Net2BindingConstants.CHANNEL_ENTRY_LOG, new StringType(entryLog.toString()));
-                logger.info("Entry log: {}", entryLog.toString());
+                if (isEntry(payload)) {
+                    updateState(Net2BindingConstants.CHANNEL_ENTRY_LOG, new StringType(accessEvent.toString()));
+                    logger.info("Entry log: {}", accessEvent.toString());
+                    applyLockoutResult(lockoutGuard.onEntry(), doorName);
+                } else {
+                    logger.info("Access event (not an entry): {}", accessEvent.toString());
+                    Integer eventType = accessEvent.has("eventType") ? accessEvent.get("eventType").getAsInt() : null;
+                    if (Net2LockoutGuard.isRefusal(eventType)) {
+                        Net2ServerHandler bridge = bridgeHandler;
+                        Net2ServerConfiguration config = bridge != null ? bridge.getServerConfiguration()
+                                : new Net2ServerConfiguration();
+                        applyLockoutResult(lockoutGuard.onRefusal(Instant.now(), config.lockoutThreshold,
+                                Duration.ofMinutes(config.lockoutWindow), config.autoReinstate,
+                                Duration.ofMinutes(config.reinstateInterval)), doorName);
+                    }
+                }
             }
 
             // Generate access denied event for eventType 23 (Access Denied)
