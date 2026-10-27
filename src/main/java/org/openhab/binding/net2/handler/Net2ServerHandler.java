@@ -31,6 +31,7 @@ import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.binding.BaseBridgeHandler;
 import org.openhab.core.thing.binding.ThingHandlerService;
 import org.openhab.core.types.Command;
+import org.openhab.core.types.RefreshType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -69,7 +70,12 @@ public class Net2ServerHandler extends BaseBridgeHandler {
 
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
-        logger.info("handleCommand received for channel: {} with command: {}", channelUID.getId(), command);
+        // REFRESH arrives for every linked channel at start-up and must not run a command: it ran
+        // listUsers at every start, and that wrote every user with their PIN into openhab.log
+        if (command instanceof RefreshType) {
+            return;
+        }
+        logger.debug("handleCommand received for channel: {} with command: {}", channelUID.getId(), command);
         if (command == null) {
             logger.warn("Command is null");
             return;
@@ -478,7 +484,8 @@ public class Net2ServerHandler extends BaseBridgeHandler {
                 String accessLevelStr = parts[2].trim();
                 String pin = parts[3].trim();
 
-                logger.info("Creating user: {} {}, accessLevel: {}, pin: {}", firstName, lastName, accessLevelStr, pin);
+                logger.info("Creating user: {} {}, accessLevel: {}, pin: {}", firstName, lastName, accessLevelStr,
+                        pin.isEmpty() ? "none" : "set");
 
                 // Resolve access level to an ID if possible (validate it exists in the system)
                 Integer accessLevelId = null;
@@ -569,7 +576,7 @@ public class Net2ServerHandler extends BaseBridgeHandler {
             logger.warn("No users returned by API");
             return;
         }
-        logger.info("Users JSON payload: {}", usersJson);
+        logger.debug("Users JSON payload ({} characters, holds PINs - not logged)", usersJson.length());
     }
 
     private void handleLockdown(Command command) throws Exception {

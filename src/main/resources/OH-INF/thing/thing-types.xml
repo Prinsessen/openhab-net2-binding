@@ -26,7 +26,8 @@
 			</parameter>
 			<parameter name="port" type="integer" required="false">
 				<label>Port</label>
-				<description>HTTPS port for API (default: 8443)</description>
+				<description>HTTPS port of the Net2 Local API</description>
+				<default>8443</default>
 			</parameter>
 			<parameter name="username" type="text" required="true">
 				<label>Username</label>
@@ -35,6 +36,7 @@
 			<parameter name="password" type="text" required="true">
 				<label>Password</label>
 				<description>Net2 API user password</description>
+				<context>password</context>
 			</parameter>
 			<parameter name="clientId" type="text" required="true">
 				<label>Client ID</label>
@@ -42,11 +44,14 @@
 			</parameter>
 			<parameter name="tlsVerification" type="boolean" required="false">
 				<label>TLS Verification</label>
-				<description>Enable TLS certificate verification</description>
+				<description>Verify the server's TLS certificate on the SignalR (live events) connection. The REST
+					calls always verify against the Java trust store.</description>
+				<default>true</default>
 			</parameter>
 			<parameter name="refreshInterval" type="integer" required="false">
 				<label>Refresh Interval</label>
-				<description>Door status polling interval in seconds</description>
+				<description>Seconds between door status polls (the safety net behind the live events)</description>
+				<default>30</default>
 			</parameter>
 			<parameter name="autoReinstate" type="boolean" required="false">
 				<label>Auto Re-Instate</label>
@@ -105,7 +110,7 @@
 			</parameter>
 			<parameter name="name" type="text" required="false">
 				<label>Door Name</label>
-				<description>User-friendly name for the door</description>
+				<description>Not used: events name the door by the thing label</description>
 			</parameter>
 		</config-description>
 	</thing-type>
@@ -119,7 +124,7 @@
 	<channel-type id="doorStatus">
 		<item-type>Switch</item-type>
 		<label>Door Status</label>
-		<description>Current door lock/unlock status (ON=Open, OFF=Closed)</description>
+		<description>The door relay as Net2 reports it (ON = released/open, OFF = locked)</description>
 		<state readOnly="true"/>
 	</channel-type>
 
@@ -132,7 +137,7 @@
 	<channel-type id="lastAccessUser">
 		<item-type>String</item-type>
 		<label>Last Access User</label>
-		<description>Last user who accessed the door</description>
+		<description>The last user named by any event at the door - an entry or a refusal</description>
 		<state readOnly="true"/>
 	</channel-type>
 
@@ -174,15 +179,16 @@
 		<label>Entry Log</label>
 		<description>JSON-formatted entry event, granted access only (event types 20 and 26):
 			{"firstName":"John","lastName":"Doe","doorName":"Front
-			Door","timestamp":"2026-01-10T18:04:01","doorId":6612642,"eventType":20,"eventSubType":0}</description>
+			Door","timestamp":"2026-01-10T18:04:01","doorId":1234567,"eventType":20,"eventSubType":0,"eventDescription":"Access
+			permitted - token only"}</description>
 		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="accessDenied">
 		<item-type>String</item-type>
 		<label>Access Denied</label>
-		<description>JSON-formatted denied access event: {"tokenNumber":"4038310","doorName":"Front
-			Door","timestamp":"2026-01-16T17:09:14","doorId":6612642}</description>
+		<description>A token Net2 does not know (event type 23), as JSON: {"tokenNumber":"1234567","doorName":"Front
+			Door","timestamp":"2026-01-16T17:09:14","doorId":1234567}. Known users who are refused are on accessEvent.</description>
 		<state readOnly="true"/>
 	</channel-type>
 
@@ -191,7 +197,7 @@
 		<label>Access Event</label>
 		<description>Every event that names a user, granted or refused, as JSON with the Net2 event type:
 			{"firstName":"John","lastName":"Doe","doorName":"Front
-			Door","timestamp":"2026-10-27T07:34:20","doorId":6203980,"eventType":112,"eventSubType":0}</description>
+			Door","timestamp":"2026-01-10T07:34:20","doorId":1234567,"eventType":25,"eventSubType":0,"eventDescription":"..."}</description>
 		<state readOnly="true"/>
 	</channel-type>
 

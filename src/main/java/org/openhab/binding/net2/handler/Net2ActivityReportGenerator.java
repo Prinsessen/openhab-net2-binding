@@ -50,9 +50,11 @@ public class Net2ActivityReportGenerator {
     private static final int HOURS_TO_RETRIEVE = 24;
 
     /** Event type codes for door-related events */
-    private static final Set<Integer> DOOR_EVENT_TYPES = Set.of(20, 23, 24, 25, 26, 27, 28, 29, 46, 47, 93);
+    private static final Set<Integer> DOOR_EVENT_TYPES = Set.of(16, 17, 20, 23, 24, 25, 26, 27, 28, 29, 46, 47, 93,
+            112);
     private static final Set<Integer> ACCESS_GRANTED_TYPES = Set.of(20, 26);
-    private static final Set<Integer> ACCESS_DENIED_TYPES = Set.of(23, 24, 25, 27);
+    // 16/17 "Access denied", 112 "Access Denied - Lockdown in Progress" (Net2 v7.01's names)
+    private static final Set<Integer> ACCESS_DENIED_TYPES = Set.of(16, 17, 23, 24, 25, 27, 112);
 
     /**
      * Fetch events from the API and generate the HTML report file.

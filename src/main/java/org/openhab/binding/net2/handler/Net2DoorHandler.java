@@ -351,7 +351,8 @@ public class Net2DoorHandler extends BaseThingHandler {
     }
 
     public void applyEvent(JsonObject payload, String target) {
-        logger.info("Applying SignalR event: target={}, payload={}", target, payload);
+        // DEBUG: the payload carries token numbers
+        logger.debug("Applying SignalR event: target={}, payload={}", target, payload);
         try {
             // Update last access time
             if (payload.has("eventTime") && !payload.get("eventTime").isJsonNull()) {
