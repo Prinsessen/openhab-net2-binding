@@ -58,6 +58,8 @@ public class Net2ServerHandler extends BaseBridgeHandler {
     private volatile Map<Integer, String> eventTypes = Collections.emptyMap();
     private volatile Map<Integer, String> eventSubTypes = Collections.emptyMap();
     private volatile boolean lockdownActive = false;
+    /** How far back the events are read for their names when the eventTypes list fails: one week. */
+    private static final int EVENT_NAME_HOURS = 168;
     private static final int SIGNALR_MAX_RECONNECT_DELAY_SECONDS = 300;
     private static final int SIGNALR_INITIAL_RECONNECT_DELAY_SECONDS = 30;
 
@@ -190,11 +192,19 @@ public class Net2ServerHandler extends BaseBridgeHandler {
             String subTypes = client.getEventTypeList("eventSubTypes");
             eventSubTypes = Net2EventTypes.parse(subTypes);
             if (eventTypes.isEmpty()) {
+                // Some servers answer the lists with an error; the events carry their own names
+                String events = client.getEvents(EVENT_NAME_HOURS);
+                eventTypes = Net2EventTypes.fromEvents(events, false);
+                if (eventSubTypes.isEmpty()) {
+                    eventSubTypes = Net2EventTypes.fromEvents(events, true);
+                }
+            }
+            if (eventTypes.isEmpty()) {
                 logger.warn("Net2 event types could not be read ({}); events carry only their numbers",
                         Net2EventTypes.shape(types));
             } else {
-                logger.info("Net2 event types loaded: {} types, {} sub types (112 = {})", eventTypes.size(),
-                        eventSubTypes.size(), eventTypes.getOrDefault(112, "not listed"));
+                logger.info("Net2 event types loaded: {} types, {} sub types; {}", eventTypes.size(),
+                        eventSubTypes.size(), new java.util.TreeMap<>(eventTypes));
             }
         } catch (Exception e) {
             logger.warn("Net2 event types could not be read: {}", e.getMessage());

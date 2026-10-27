@@ -60,4 +60,18 @@ class Net2EventTypesTest {
         assertEquals("not JSON", Net2EventTypes.shape("not json"));
         assertEquals("object, keys [a]", Net2EventTypes.shape("{\"a\":1}"));
     }
+
+    @Test
+    void namesFromTheEventsThemselves() {
+        // what GET /api/v1/events returns (EventLocal), when /events/eventTypes answers 500
+        String events = "[{\"eventType\":20,\"eventDescription\":\"Access permitted\",\"eventSubType\":0},"
+                + "{\"eventType\":112,\"eventDescription\":\"Y\"},{\"eventType\":112,\"eventDescription\":\"later\"},"
+                + "{\"eventType\":47}]";
+        Map<Integer, String> t = Net2EventTypes.fromEvents(events, false);
+        assertEquals("Access permitted", t.get(20));
+        assertEquals("Y", t.get(112), "the first name seen is kept");
+        assertNull(t.get(47));
+        assertEquals("Z", Net2EventTypes.fromEvents("{\"events\":[{\"eventTypeId\":5,\"eventTypeDescription\":\"Z\"}]}", false).get(5));
+        assertTrue(Net2EventTypes.fromEvents("[]", true).isEmpty());
+    }
 }

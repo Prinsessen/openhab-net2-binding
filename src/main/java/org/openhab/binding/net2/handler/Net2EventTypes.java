@@ -26,8 +26,9 @@ import com.google.gson.JsonParser;
 
 /**
  * Net2's own names for its event types and sub types, read once from
- * {@code GET /api/v1/events/eventTypes} and {@code /eventSubTypes}, so an event can say what it
- * is ("Access denied ...") instead of a bare number such as 112. The API documents the answer
+ * {@code GET /api/v1/events/eventTypes} and {@code /eventSubTypes} - or, where the server answers
+ * those with an error (HTTP 500 from a Net2 v7.01 server, 2026-10-27), learnt from the last week of
+ * events - so an event can say what it is ("Access denied ...") instead of a bare number such as 112. The API documents the answer
  * only as "object", so the reader accepts a list of objects, an object of id to name, or such a
  * list under one property, with the usual id and name keys.
  *
@@ -51,6 +52,51 @@ public class Net2EventTypes {
         }
         try {
             return read(JsonParser.parseString(json));
+        } catch (RuntimeException e) {
+            return Collections.emptyMap();
+        }
+    }
+
+    /**
+     * The names Net2 put on the events themselves ({@code GET /api/v1/events}: eventType with
+     * eventDescription, or eventTypeId with eventTypeDescription) - for a server that answers the
+     * eventTypes list with an error. {@code subTypes} picks the sub type names instead.
+     */
+    public static Map<Integer, String> fromEvents(@Nullable String json, boolean subTypes) {
+        if (json == null || json.isBlank()) {
+            return Collections.emptyMap();
+        }
+        try {
+            JsonElement root = JsonParser.parseString(json);
+            JsonArray events = null;
+            if (root.isJsonArray()) {
+                events = root.getAsJsonArray();
+            } else if (root.isJsonObject()) {
+                for (Map.Entry<String, JsonElement> e : root.getAsJsonObject().entrySet()) {
+                    if (e.getValue().isJsonArray()) {
+                        events = e.getValue().getAsJsonArray();
+                        break;
+                    }
+                }
+            }
+            if (events == null) {
+                return Collections.emptyMap();
+            }
+            String[] idKeys = subTypes ? new String[] { "eventSubType", "eventSubTypeId" }
+                    : new String[] { "eventType", "eventTypeId" };
+            String[] nameKeys = subTypes ? new String[] { "eventSubTypeDescription" }
+                    : new String[] { "eventDescription", "eventTypeDescription" };
+            Map<Integer, String> table = new HashMap<>();
+            for (JsonElement item : events) {
+                if (item.isJsonObject()) {
+                    Integer id = firstInt(item.getAsJsonObject(), idKeys);
+                    String name = firstString(item.getAsJsonObject(), nameKeys);
+                    if (id != null && name != null) {
+                        table.putIfAbsent(id, name);
+                    }
+                }
+            }
+            return table;
         } catch (RuntimeException e) {
             return Collections.emptyMap();
         }

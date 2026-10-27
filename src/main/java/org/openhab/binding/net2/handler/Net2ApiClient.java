@@ -595,7 +595,8 @@ public class Net2ApiClient {
         if (response.statusCode() == 200) {
             return response.body();
         }
-        logger.warn("Failed to read the Net2 {}. Status: {}", path, response.statusCode());
+        logger.info("Net2 {} not available (HTTP {}), names are read from the events instead", path,
+                response.statusCode());
         return "";
     }
 
