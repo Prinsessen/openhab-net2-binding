@@ -34,7 +34,7 @@ class Net2DoorHandlerEventTest {
 
     private static final String REFUSED = "{\"eventTime\":\"2026-10-27T07:34:20\",\"eventType\":112,\"eventSubType\":0,"
             + "\"tokenType\":\"Token\",\"tokenNumber\":1234567,\"userId\":9,\"userName\":\"Doe John\","
-            + "\"deviceId\":6203980,\"notificationType\":\"EventsReportEvent\"}";
+            + "\"deviceId\":1234567,\"notificationType\":\"EventsReportEvent\"}";
 
     @Test
     void aRefusalIsNotAnEntry() {
@@ -60,12 +60,12 @@ class Net2DoorHandlerEventTest {
 
     @Test
     void theEventJsonCarriesTheTypeAndNotTheToken() {
-        JsonObject json = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 6203980, null, null);
+        JsonObject json = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 1234567, null, null);
         assertEquals("John", json.get("firstName").getAsString());
         assertEquals("Doe", json.get("lastName").getAsString());
         assertEquals("Front Door", json.get("doorName").getAsString());
         assertEquals("2026-10-27T07:34:20", json.get("timestamp").getAsString());
-        assertEquals(6203980, json.get("doorId").getAsInt());
+        assertEquals(1234567, json.get("doorId").getAsInt());
         assertEquals(112, json.get("eventType").getAsInt());
         assertEquals(0, json.get("eventSubType").getAsInt());
         assertFalse(json.has("tokenNumber"));
@@ -73,11 +73,11 @@ class Net2DoorHandlerEventTest {
 
     @Test
     void netTwosNamesGoIntoTheJsonWhenKnown() {
-        JsonObject json = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 6203980,
+        JsonObject json = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 1234567,
                 "Access denied - example", "None");
         assertEquals("Access denied - example", json.get("eventDescription").getAsString());
         assertEquals("None", json.get("eventSubTypeDescription").getAsString());
-        JsonObject bare = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 6203980, null, null);
+        JsonObject bare = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 1234567, null, null);
         assertFalse(bare.has("eventDescription"));
     }
 }

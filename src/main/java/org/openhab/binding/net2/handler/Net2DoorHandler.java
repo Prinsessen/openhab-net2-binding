@@ -87,6 +87,7 @@ public class Net2DoorHandler extends BaseThingHandler {
 
         this.doorId = config.doorId;
         updateStatus(ThingStatus.ONLINE);
+        publishLockoutState();
 
         // Subscribe to door-specific SignalR events
         Net2SignalRClient signalRClient = bridgeHandler.getSignalRClient();
@@ -213,6 +214,15 @@ public class Net2DoorHandler extends BaseThingHandler {
         } else {
             logger.error("Failed to trigger fire-and-forget control for door {}", doorId);
         }
+    }
+
+    /**
+     * The guard's own state on the lockout channel, at start and on every poll: the guard lives in
+     * memory, and a persistence service that restores items (mapdb by default) would otherwise bring
+     * back an old ON that nothing turns off.
+     */
+    private void publishLockoutState() {
+        updateState(Net2BindingConstants.CHANNEL_LOCKOUT, lockoutGuard.isLockedOut() ? OnOffType.ON : OnOffType.OFF);
     }
 
     private void applyLockoutResult(Net2LockoutGuard.Result result, String doorName) {
@@ -533,6 +543,7 @@ public class Net2DoorHandler extends BaseThingHandler {
      * Update state from API response
      */
     public void updateFromApiResponse(JsonArray doorStatusArray) {
+        publishLockoutState();
         try {
             for (int i = 0; i < doorStatusArray.size(); i++) {
                 JsonObject doorStatus = doorStatusArray.get(i).getAsJsonObject();

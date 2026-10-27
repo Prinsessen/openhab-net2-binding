@@ -172,7 +172,7 @@ public class Net2SignalRClient implements Listener {
         }
 
         String payload = data.toString();
-        logger.info("SignalR message received: {}", payload);
+        logger.debug("SignalR message received: {}", payload); // DEBUG: names and token numbers
         try {
             if (mode == Mode.CORE) {
                 for (String frame : payload.split(RECORD_SEPARATOR)) {

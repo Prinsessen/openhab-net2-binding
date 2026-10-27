@@ -1,289 +1,95 @@
-# Quick Start Guide for Net2 Binding
+# Net2 Binding Quick Start
 
-## What's Been Created
+From download to a working door in openHAB 5.2. Full reference: [README.md](README.md).
 
-A complete **OpenHAB 5 binding** for **Paxton Net2 door control** has been created in:
-```
-/etc/openhab/net2-binding/
-```
+## 1. Check the prerequisites
 
-This is **isolated source code** - it won't affect your system until you explicitly build and deploy it.
+- openHAB 5.2
+- A Paxton Net2 server with the Local API licensed and enabled, and the API licence's client ID
+- A Net2 operator account for openHAB ("First Name Last Name" and password)
+- Net2 Plus or Net2 Classic ACUs. Net2 Nano, Paxlock and Paxlock Pro do not work with the Local API.
+- The openHAB host can reach the Net2 server on the API port (default 8443).
+- The Net2 server's certificate is trusted by the Java that runs openHAB. The REST calls always check it; the
+  `tlsVerification` parameter only covers the SignalR connection. See README, Troubleshooting.
 
-## Directory Overview
+## 2. Install
 
-```
-/etc/openhab/net2-binding/
-├── pom.xml                    # Maven build configuration
-├── build.sh                   # Easy build script
-├── deploy.sh                  # Safe deployment script
-├── README.md                  # Full binding documentation
-├── DEVELOPMENT.md             # Developer guide
-├── EXAMPLES.md                # Usage examples & rules
-├── src/
-│   ├── main/                  # Binding source code
-│   │   ├── java/...           # Java handler classes
-│   │   └── resources/         # XML configurations
-│   └── test/                  # Unit tests
-└── target/                    # Build output (created after build)
-```
+1. Download `org.openhab.binding.net2-5.2.2.jar` from the
+   [releases](https://github.com/Prinsessen/openhab-net2-binding/releases).
+2. Copy it into the addons folder: `/usr/share/openhab/addons/` on an apt/deb installation,
+   `$OPENHAB_HOME/addons/` otherwise. Remove an older Net2 JAR from that folder first.
+3. openHAB loads it by itself; no restart. Check in the Karaf console (`openhab-cli console`):
+   `bundle:list | grep -i net2` should show the bundle as Active.
 
-## Hardware Requirements
+To build the JAR yourself, see README, "Building from Source".
 
-### ✅ Compatible Controllers
-- **Paxton Net2 Plus ACU** ([Manual](https://www.paxton-access.com/wp-content/uploads/2019/03/ins-20006.pdf))
-- **Paxton Net2 Classic ACU** (Discontinued)
+## 3. Add the bridge and the doors
 
-### ❌ Not Compatible
-- **Net2 Nano** ([Info](https://www.paxton-access.com/wp-content/uploads/2019/03/ins-30075.pdf))
-- **Paxlock** ([Info](https://www.paxton-access.com/wp-content/uploads/2019/03/ins-20000.pdf))
-- **Paxlock Pro** ([Info](https://www.paxton-access.com/wp-content/uploads/2022/05/ins-30229.pdf))
+Either in the Main UI (Settings -> Things -> + -> Paxton Net2 Binding -> Net2 Server; the doors then appear in
+the Inbox), or in a file:
 
-**Note:** Requires Net2 Local API (Plus/Classic only).
+**things/net2.things**
 
-## Quick Start
-
-### Step 1: Build the Binding
-
-```bash
-cd /etc/openhab/net2-binding
-./build.sh
-```
-
-**Options:**
-```bash
-./build.sh --quick          # Fast build (skip tests)
-./build.sh --skip-tests     # Build without running tests
-./build.sh --no-clean       # Don't clean before build
-```
-
-**Output:** `target/org.openhab.binding.net2-5.1.0.jar`
-
-### Step 2: Deploy to OpenHAB
-
-```bash
-./deploy.sh
-```
-
-This script will:
-- Backup existing binding (if any)
-- Copy new JAR to `/opt/openhab/addons/`
-- Optionally restart OpenHAB
-- Show logs for verification
-
-### Step 3: Configure in OpenHAB
-
-Create things and items:
-
-**things/net2.things:**
-```
-Bridge net2:net2server:myserver [
-    hostname="net2.example.com",
-    port=8443,
-    username="Your Name",
-    password="your_secure_password",
-    clientId="your_oauth_client_id"
-] {
-    Thing door fordoor [doorId=6203980, name="Front Door"]
+```java
+Bridge net2:net2server:net2 "Net2 Server" [ hostname="net2.example.com", port=8443, username="John Doe",
+        password="secret", clientId="00000000-0000-0000-0000-000000000000" ] {
+    Thing door frontdoor "Front Door" [ doorId=1234567 ]
 }
 ```
 
-**items/net2.items:**
-```
-Switch Front_Door { channel="net2:door:myserver:fordoor:action" }
-Switch Front_Door_Status { channel="net2:door:myserver:fordoor:status" }
-String Front_Door_LastUser { channel="net2:door:myserver:fordoor:lastAccessUser" }
-DateTime Front_Door_LastTime { channel="net2:door:myserver:fordoor:lastAccessTime" }
-String Front_Door_EntryLog { channel="net2:door:myserver:fordoor:entryLog" }
+- `doorId` is the Net2 door ID (on a Net2 Plus, the ACU serial number). Discovery shows it.
+- The thing label ("Front Door") names the door in every event.
+- Defaults: door status poll every 30 seconds, automatic Re-Instate off.
 
-// Bridge channels (user management)
-String Net2_CreateUser        "Create User"        { channel="net2:net2server:myserver:createUser" }
-String Net2_DeleteUser        "Delete User"        { channel="net2:net2server:myserver:deleteUser" }
-String Net2_ListAccessLevels  "List Access Levels" { channel="net2:net2server:myserver:listAccessLevels" }
-```
+## 4. Add items
 
-### Step 4: Use in Rules
+**items/net2.items**
 
 ```java
-rule "Unlock door"
-when Item Command_Unlock received command ON
-then
-    Front_Door.sendCommand(ON)
-end
+Switch   Front_Door_Action     "Front Door"                 <lock> { channel="net2:door:net2:frontdoor:action" }
+Switch   Front_Door_Status     "Front Door relay [%s]"      <door> { channel="net2:door:net2:frontdoor:status" }
+Number   Front_Door_Timed      "Front Door timed open"      <lock> { channel="net2:door:net2:frontdoor:controlTimed" }
+String   Front_Door_LastUser   "Last user [%s]"                    { channel="net2:door:net2:frontdoor:lastAccessUser" }
+DateTime Front_Door_LastTime   "Last event [%1$tF %1$tT]"          { channel="net2:door:net2:frontdoor:lastAccessTime" }
+String   Front_Door_EntryLog   "Entry log [%s]"                    { channel="net2:door:net2:frontdoor:entryLog" }
+String   Front_Door_AccessEvent "Access event [%s]"                { channel="net2:door:net2:frontdoor:accessEvent" }
+Switch   Front_Door_Lockout    "Lockout [%s]"                      { channel="net2:door:net2:frontdoor:lockout" }
+Switch   Front_Door_Reinstate  "Re-instate ACU"                    { channel="net2:door:net2:frontdoor:reinstate" }
 ```
 
-## Features Implemented
+## 5. Check that it works
 
-✅ **API Communication**
-- OAuth2 JWT authentication
-- Automatic token refresh (30-min tokens)
-- Secure HTTPS connection with cert verification control
-
-✅ **Door Control**
-- Hold door open: `POST /commands/door/holdopen`
-- Close door: `POST /commands/door/close`
-- Get status: `GET /doors/status`
-
-✅ **Real-time Updates**
-- Automatic polling (configurable, default 30 sec)
-- SignalR event infrastructure (WebSocket ready)
-- Entry logging channel for physical badge access events
-- Status change notifications
-
-✅ **Discovery Service**
-- Auto-detect available doors
-- Scan for new doors
-- Automatic thing creation
-
-✅ **Channels per Door**
-| Channel | Type | Access |
-|---------|------|--------|
-| `status` | Switch | Read-only |
-| `action` | Switch | Read/Write |
-| `lastAccessUser` | String | Read-only |
-| `lastAccessTime` | DateTime | Read-only |
-
-✅ **User Management (Bridge Channels)**
-| Channel | Type | Purpose |
-|---------|------|---------|
-| `createUser` | String | Create user with access level and PIN: `firstName,lastName,accessLevel,pin` |
-| `deleteUser` | String | Delete user by ID |
-| `listAccessLevels` | String | Log available access levels |
-
-### Quick Test via REST
+- The bridge goes ONLINE; `openhab.log` shows "SignalR connected and subscribed successfully" and the event type
+  table ("Net2 event types loaded: ...").
+- Present a valid token: `Front_Door_Status` turns ON while the relay is released, `Front_Door_EntryLog` gets
+  a JSON entry.
+- Send `5` to `Front_Door_Timed`: the door opens for 5 seconds.
 
 ```bash
-# Create user and assign access level 3
-curl -X POST "http://localhost:8080/rest/items/Net2_CreateUser" \
-    -H "Content-Type: text/plain" \
-    --data "Michael,Agesen,3,7654"
-
-# List access levels
-curl -X POST "http://localhost:8080/rest/items/Net2_ListAccessLevels" \
-    -H "Content-Type: text/plain" \
-    --data "REFRESH"
-
-# Delete user (replace 79 with created ID from logs)
-curl -X POST "http://localhost:8080/rest/items/Net2_DeleteUser" \
-    -H "Content-Type: text/plain" \
-    --data "79"
+curl -X POST "http://localhost:8080/rest/items/Front_Door_Timed" -H "Content-Type: text/plain" -d "5"
 ```
 
-## File Organization
+On a door with a momentary relay (a garage door), every command toggles the door. Test with care.
 
-**Safe & Isolated:**
-- ✅ All in `/etc/openhab/net2-binding/` - won't affect system
-- ✅ No modification of existing OpenHAB files
-- ✅ No system-wide installation until you run `./deploy.sh`
-- ✅ Easy rollback with backup system
-- ✅ Can be safely deleted if not needed
+## 6. Next steps
 
-## Documentation Files
-
-- **README.md** - Complete binding documentation
-- **DEVELOPMENT.md** - For developers/contributing
-- **EXAMPLES.md** - Example rules, sitemaps, items
-- **QUICKSTART.md** - This file
-
-## Building from Scratch
-
-If you want to understand the structure:
-
-```bash
-# View main binding code
-cat src/main/java/org/openhab/binding/net2/handler/Net2ServerHandler.java
-
-# View API client
-cat src/main/java/org/openhab/binding/net2/handler/Net2ApiClient.java
-
-# View thing definitions
-cat src/main/resources/OH-INF/thing/thing-types.xml
-```
-
-## Testing
-
-```bash
-# Run unit tests
-cd /etc/openhab/net2-binding
-mvn test
-
-# View test coverage
-mvn jacoco:report
-# Open: target/site/jacoco/index.html
-```
+- Lockout detection and Re-Instate: README, "ACU lockout and Re-Instate"
+- Rules, alerts, lockdown, Grafana: [EXAMPLES.md](EXAMPLES.md)
+- Entry log details: [ENTRY_LOGGING.md](ENTRY_LOGGING.md)
+- What the binding logs: README, "Privacy and logging"
 
 ## Troubleshooting
 
-### Build fails with "Maven not found"
-```bash
-sudo apt-get install maven
-```
+| Symptom | Check |
+|---------|-------|
+| Binding not listed | JAR in the right addons folder; `bundle:list` in the console; `openhab.log` for errors |
+| Bridge OFFLINE "Failed to authenticate" | operator name, password, client ID; Local API enabled and licensed |
+| Bridge OFFLINE with a certificate error | the Net2 certificate is not trusted by openHAB's Java (README, Troubleshooting) |
+| Door commands do nothing | `doorId`; the operator's rights; the bridge must be ONLINE |
+| No live updates | "SignalR ..." lines in `openhab.log`; without SignalR the state still follows the 30 s poll |
 
-### Build fails with "Java version"
-```bash
-sudo apt-get install openjdk-21-jdk
-```
+More detail in the log: `log:set DEBUG org.openhab.binding.net2` in the console, back with
+`log:set DEFAULT org.openhab.binding.net2`. DEBUG output contains token numbers and, in one SignalR mode, the
+access token; do not post it unedited.
 
-### After deployment, binding doesn't appear
-```bash
-# Check logs
-tail -f /var/log/openhab/openhab.log | grep net2
-
-# Check jar is there
-ls -la /opt/openhab/addons/org.openhab.binding.net2-*.jar
-```
-
-### Door commands not working
-1. Verify Net2 server configuration (hostname, port, credentials)
-2. Check bridge is ONLINE in OpenHAB
-3. Verify door IDs match Net2 system
-4. Check logs for authentication errors
-
-## Next Steps
-
-1. **Read** `README.md` for full documentation
-2. **View** `EXAMPLES.md` for automation examples
-3. **Build** with `./build.sh`
-4. **Deploy** with `./deploy.sh`
-5. **Configure** things and items
-6. **Automate** with rules and scripts
-
-## Safety Notes
-
-✅ **This binding is safe because:**
-- It's source code only until you explicitly build it
-- Build output goes to `target/` directory (isolated)
-- Deployment requires explicit `./deploy.sh` execution
-- Deploy script backs up existing files
-- Easy to rollback - just remove JAR and restart OpenHAB
-
-## Support
-
-For issues:
-1. Check logs: `/var/log/openhab/openhab.log`
-2. Read DEVELOPMENT.md for debugging
-3. OpenHAB community: https://community.openhab.org/
-
-## Need Professional Installation?
-
-**Certified Paxton Installer:**
-
-**Agesen El-Teknik** - 25+ years experience  
-📍 Terndrupvej 81, 9460 Brovst, Denmark  
-📞 +45 98 23 20 10  
-📧 Nanna@agesen.dk  
-🌐 [www.agesen.dk](https://www.agesen.dk)
-
-## Architecture
-
-```
-Your System
-└── /etc/openhab/net2-binding/          ← Source code (safe)
-    ├── build.sh              ← Compile to JAR
-    └── deploy.sh             ← Deploy to OpenHAB
-        └── /opt/openhab/addons/        ← JAR installed here
-            └── Binding runs within OpenHAB
-                └── Controls doors via Net2 API
-                    └── https://net2.server:8443/api/v1/...
-```
-
-Enjoy! 🚪
+Professional installation: see README, "Professional Installation Services".

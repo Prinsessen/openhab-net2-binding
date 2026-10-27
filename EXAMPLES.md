@@ -1,1502 +1,657 @@
+# Net2 Binding Examples
 
-# Net2 Binding Configuration Examples
+Configuration examples for the Net2 binding 5.2.2: things, items, sitemaps, rules, alerts, the ACU lockout,
+the building lockdown, and an entry log dashboard in Grafana. Channel and parameter reference:
+[README.md](README.md).
 
-This document provides complete working examples for configuring the Net2 binding with items, sitemaps, rules, and user management.
+All examples use the bridge `net2` and the doors `frontdoor`, `backdoor` and `garage`. The rules are in
+openHAB's DSL (`rules/*.rules`) unless marked as JS Scripting (`automation/js/*.js`, needs the JS Scripting
+add-on). Rules that read JSON with `transform("JSONPATH", ...)` need the JSONPath transformation add-on.
 
-## Complete Working Example
+## Contents
 
-### Items Configuration
+- [Things and items](#things-and-items)
+- [Sitemap](#sitemap)
+- [Keeping action in step with status](#keeping-action-in-step-with-status)
+- [Door control](#door-control)
+- [User management](#user-management)
+- [Reacting to an entry](#reacting-to-an-entry)
+- [Access denied alerts](#access-denied-alerts)
+- [ACU lockout notification](#acu-lockout-notification)
+- [Building lockdown](#building-lockdown)
+- [Other rules](#other-rules)
+- [Persistence](#persistence)
+- [Entry log dashboard with InfluxDB and Grafana](#entry-log-dashboard-with-influxdb-and-grafana)
+- [Controlling doors from outside openHAB](#controlling-doors-from-outside-openhab)
 
-**File: items/net2.items**
+## Things and items
 
-```openhab
-// Door 1 - Front Door
-Switch Net2_Door1_Action "Door 1 Action" { channel="net2:door:server:door1:action" }
-Switch Net2_Door1_Status "Door 1 Status" { channel="net2:door:server:door1:status" }
-Number Net2_Door1_ControlTimed "Door 1 Timed Control" { channel="net2:door:server:door1:controlTimed" }
-String Net2_Door1_LastUser "Door 1 Last User" { channel="net2:door:server:door1:lastAccessUser" }
-DateTime Net2_Door1_LastTime "Door 1 Last Time" { channel="net2:door:server:door1:lastAccessTime" }
-String Net2_Door1_EntryLog "Door 1 Entry Log" { channel="net2:door:server:door1:entryLog" }
-String Net2_Door1_AccessDenied "Door 1 Access Denied" { channel="net2:door:server:door1:accessDenied" }
+**things/net2.things**
 
-// Door 2 - Side Door
-String Net2_Door2_AccessDenied "Door 2 Access Denied" { channel="net2:door:server:door2:accessDenied" }
-
-// Door 3 - Garage Door
-String Net2_Door3_AccessDenied "Door 3 Access Denied" { channel="net2:door:server:door3:accessDenied" }
-
-// Bridge User Management Channels
-String Net2_CreateUser "Create User" { channel="net2:net2server:server:createUser" }
-String Net2_DeleteUser "Delete User" { channel="net2:net2server:server:deleteUser" }
-String Net2_ListAccessLevels "List Access Levels" { channel="net2:net2server:server:listAccessLevels" }
-String Net2_ListUsers "List Users" { channel="net2:net2server:server:listUsers" }
-
-// Building Lockdown
-Switch Net2_Lockdown "Building Lockdown" { channel="net2:net2server:server:lockdown" }
-```
-
-### Sitemap Configuration
-
-**File: sitemaps/myhouse.sitemap**
-
-```openhab
-Frame label="Door 1 Controls" {
-    Text item=Net2_Door1_Status label="Fordør Status" icon="door"
-    Switch item=Net2_Door1_Action label="Fordør Action" icon="lock-key"
-    Switch item=Net2_Door1_ControlTimed label="Fordør Timed Door" mappings=[1="Open"] icon="lock-key"
-    Text item=Net2_Door1_EntryLog label="Last Entry [JS(entrylog.js):%s]" icon="log"
+```java
+Bridge net2:net2server:net2 "Net2 Server" [ hostname="net2.example.com", port=8443, username="John Doe",
+        password="secret", clientId="00000000-0000-0000-0000-000000000000", refreshInterval=30 ] {
+    Thing door frontdoor "Front Door" [ doorId=1234567 ]
+    Thing door backdoor  "Back Door"  [ doorId=1234568 ]
+    Thing door garage    "Garage"     [ doorId=1234569 ]
 }
 ```
 
-**Key Points:**
-- `Status` item shows **physical door relay state** (read-only, updates via SignalR instantly)
-- `Action` item is for **manual control** (ON=Hold Open, OFF=Close)
-- `ControlTimed` with mapping `[1="Open"]` sends value `1` = 1 second open time
+The thing label ("Front Door") is the `doorName` in every event JSON.
 
-### Synchronization Rules
-
-**File: rules/net2_sync.rules**
-
-These rules keep the Action buttons synchronized with the physical door status:
-
-```openhab
-rule "Net2 Door 1 Status to Action Sync"
-when
-    Item Net2_Door1_Status changed
-then
-    logInfo("Net2Sync", "Door 1 Status changed to: " + Net2_Door1_Status.state)
-    Net2_Door1_Action.postUpdate(Net2_Door1_Status.state)
-end
-
-rule "Net2 Door 2 Status to Action Sync"
-when
-    Item Net2_Door2_Status changed
-then
-    logInfo("Net2Sync", "Door 2 Status changed to: " + Net2_Door2_Status.state)
-    Net2_Door2_Action.postUpdate(Net2_Door2_Status.state)
-end
-
-rule "Net2 Door 3 Status to Action Sync"
-when
-    Item Net2_Door3_Status changed
-then
-    logInfo("Net2Sync", "Door 3 Status changed to: " + Net2_Door3_Status.state)
-    Net2_Door3_Action.postUpdate(Net2_Door3_Status.state)
-end
-
-rule "Net2 Door 4 Status to Action Sync"
-when
-    Item Net2_Door4_Status changed
-then
-    logInfo("Net2Sync", "Door 4 Status changed to: " + Net2_Door4_Status.state)
-    Net2_Door4_Action.postUpdate(Net2_Door4_Status.state)
-end
-```
-
-**Why These Rules Are Needed:**
-- The `Status` channel receives instant updates from SignalR (doorRelayOpen field)
-- The `Action` channel is used for sending commands
-- These rules sync the Action button display to match the physical door state
-- Without these rules, the Action button won't reflect remote/card-based door operations
-
-## User Management Examples
-
-### List All Users
-
-Query the Net2 system for all users and log the complete JSON payload:
-
-**From Rules:**
-```openhab
-rule "Query All Users"
-when
-    // Trigger condition (e.g., time-based, button press, etc.)
-then
-    sendCommand(Net2_ListUsers, ON)
-    // Results logged to /var/log/openhab/openhab.log
-    // Look for: "Users JSON payload: [...]"
-end
-```
-
-**From REST API:**
-```bash
-curl -X POST "http://localhost:8080/rest/items/Net2_ListUsers" \
-  -H "Content-Type: text/plain" \
-  -d "REFRESH"
-```
-
-**View Results:**
-```bash
-grep "Users JSON" /var/log/openhab/openhab.log | tail -1
-```
-
-**JSON Output Example:**
-```json
-[
-  {
-    "Id": 1,
-    "FirstName": "John",
-    "LastName": "Doe",
-    "ExpiryDate": "2027-01-10T12:46:20.723523+01:00",
-    "ActivateDate": "2026-01-11T12:46:20.723523+01:00",
-    "PIN": "1234",
-    "Telephone": "01273 100200",
-    "Extension": "200",
-    "AccessLevelId": 3,
-    "AccessLevelName": "Staff",
-    "CustomFields": {...},
-    "IsAlarmUser": false,
-    "HasImage": true
-  },
-  ...
-]
-```
-
-### List Access Levels
-
-Query available access levels in the system:
-
-**From Rules:**
-```openhab
-rule "Query Access Levels"
-when
-    // Trigger condition
-then
-    sendCommand(Net2_ListAccessLevels, ON)
-    // Results logged as: "Access levels: [1:Public] [2:Staff] [3:Admin]"
-end
-```
-
-**View Results:**
-```bash
-grep "Access levels" /var/log/openhab/openhab.log | tail -1
-```
-
-### Create User
-
-Create a new user with specified access level and PIN:
-
-**From Rules:**
-```openhab
-rule "Create New User"
-when
-    // Trigger condition
-then
-    // Format: firstName,lastName,accessLevel,pin
-    sendCommand(Net2_CreateUser, "Michael,Smith,3,5678")
-    logInfo("Net2", "User creation command sent")
-end
-```
-
-**Access Level Options:**
-- Can be numeric ID (e.g., `3`) or name (e.g., `Staff`)
-- Query available levels first using `listAccessLevels`
-
-### Delete User
-
-Remove a user by their ID:
-
-**From Rules:**
-```openhab
-rule "Delete User"
-when
-    // Trigger condition
-then
-    sendCommand(Net2_DeleteUser, "79")  // User ID
-    logInfo("Net2", "User deletion command sent for ID 79")
-end
-```
-
-**Get User IDs:**
-Use `listUsers` channel to see all user IDs, then delete by ID number.
-
-## Access Denied Detection (Security Alerts)
-
-The `accessDenied` channel detects unauthorized access attempts when invalid cards or tokens are presented to Net2 readers. This enables real-time security alerting via email, SMS, or other notification systems.
-
-### How It Works
-
-- The binding monitors Net2 SignalR LiveEvents for eventType 23 (Access Denied)
-- When an invalid card/token is presented, the channel receives JSON data
-- Rules can parse this data and trigger appropriate alerts
-- Works for all doors with Net2 readers attached
-
-### JSON Format
-
-When an access denied event occurs, the channel receives:
-
-```json
-{
-  "tokenNumber": "1234567",
-  "doorName": "Front Door",
-  "timestamp": "2026-01-16T17:26:50",
-  "doorId": 6612642
-}
-```
-
-### Items Configuration
-
-**File: items/net2.items**
-
-```openhab
-// Access Denied channels for all doors
-String Net2_Door1_AccessDenied "Door 1 Access Denied" { channel="net2:door:server:door1:accessDenied" }
-String Net2_Door2_AccessDenied "Door 2 Access Denied" { channel="net2:door:server:door2:accessDenied" }
-String Net2_Door3_AccessDenied "Door 3 Access Denied" { channel="net2:door:server:door3:accessDenied" }
-String Net2_Door4_AccessDenied "Door 4 Access Denied" { channel="net2:door:server:door4:accessDenied" }
-String Net2_Door5_AccessDenied "Door 5 Access Denied" { channel="net2:door:server:door5:accessDenied" }
-```
-
-### Rule Example - Email/SMS Alerts
-
-**File: rules/net2_access_denied.rules**
-
-This rule sends email and SMS notifications when unauthorized access is attempted at any door:
-
-```openhab
-rule "Alert on Access Denied - All Doors"
-when
-    Item Net2_Door1_AccessDenied received update or
-    Item Net2_Door2_AccessDenied received update or
-    Item Net2_Door3_AccessDenied received update or
-    Item Net2_Door4_AccessDenied received update or
-    Item Net2_Door5_AccessDenied received update
-then
-    // Find the door with the most recent access denied event by comparing timestamps
-    var String jsonData = ""
-    var String latestTimestamp = ""
-    
-    // Check Door 1
-    var state1 = Net2_Door1_AccessDenied.state.toString()
-    if (state1 != "NULL" && state1.contains("tokenNumber")) {
-        try {
-            var ts1 = transform("JSONPATH", "$.timestamp", state1)
-            if (latestTimestamp == "" || ts1 > latestTimestamp) {
-                latestTimestamp = ts1
-                jsonData = state1
-            }
-        } catch (Exception e) {}
-    }
-    
-    // Check Door 2
-    var state2 = Net2_Door2_AccessDenied.state.toString()
-    if (state2 != "NULL" && state2.contains("tokenNumber")) {
-        try {
-            var ts2 = transform("JSONPATH", "$.timestamp", state2)
-            if (latestTimestamp == "" || ts2 > latestTimestamp) {
-                latestTimestamp = ts2
-                jsonData = state2
-            }
-        } catch (Exception e) {}
-    }
-    
-    // Repeat for remaining doors (Door 3, 4, 5)...
-    
-    if (jsonData == "") {
-        logWarn("net2_access_denied", "No valid access denied data found")
-        return
-    }
-    
-    // Parse JSON to extract details
-    try {
-        val doorName = transform("JSONPATH", "$.doorName", jsonData)
-        val tokenNumber = transform("JSONPATH", "$.tokenNumber", jsonData)
-        val timestamp = transform("JSONPATH", "$.timestamp", jsonData)
-        val doorId = transform("JSONPATH", "$.doorId", jsonData)
-        
-        // Extract time from timestamp (HH:mm:ss)
-        val timeStr = timestamp.substring(11, 19)
-        
-        val alertMessage = "⚠️ UNAUTHORIZED ACCESS ATTEMPT at " + doorName + 
-                          "\\nToken/Card: " + tokenNumber + 
-                          "\\nTime: " + timeStr + 
-                          "\\nDoor ID: " + doorId
-        
-        logWarn("net2_access_denied", alertMessage)
-        
-        // Send email notifications (requires mail binding)
-        val mailActions = getActions("mail", "mail:smtp:samplesmtp")
-        
-        // Email to security team
-        val success1 = mailActions.sendMail(
-            "security@example.com",
-            "⚠️ Net2 Unauthorized Access Alert",
-            "SECURITY ALERT: Unauthorized Access Attempt\\n\\n" +
-            "Door: " + doorName + "\\n" +
-            "Token/Card Number: " + tokenNumber + "\\n" +
-            "Time: " + timeStr + "\\n" +
-            "Door ID: " + doorId + "\\n\\n" +
-            "An invalid card or token was presented to the reader.\\n" +
-            "Please review security footage and door logs."
-        )
-        logInfo("net2_access_denied", "Email sent to security@example.com - Status: " + success1)
-        
-        // SMS via email-to-SMS gateway (example using uni-tel.dk format)
-        val success2 = mailActions.sendMail(
-            "1234567890@sms.gateway.example.com",
-            "Net2 Alert",
-            "SECURITY: Unauthorized access at " + doorName + " - Token " + tokenNumber + " at " + timeStr
-        )
-        logInfo("net2_access_denied", "SMS sent - Status: " + success2)
-        
-    } catch (Exception e) {
-        logError("net2_access_denied", "Error processing access denied event: " + e.getMessage())
-    }
-end
-```
-
-### Simplified Single-Door Example
-
-If you only want to monitor one specific door:
-
-```openhab
-rule "Alert on Front Door Access Denied"
-when
-    Item Net2_Door1_AccessDenied received update
-then
-    val jsonData = Net2_Door1_AccessDenied.state.toString()
-    
-    if (jsonData == "NULL" || !jsonData.contains("tokenNumber")) {
-        return
-    }
-    
-    val doorName = transform("JSONPATH", "$.doorName", jsonData)
-    val tokenNumber = transform("JSONPATH", "$.tokenNumber", jsonData)
-    val timestamp = transform("JSONPATH", "$.timestamp", jsonData)
-    
-    logWarn("net2_security", "Access DENIED at " + doorName + ": Token " + tokenNumber)
-    
-    // Send notification
-    val mailActions = getActions("mail", "mail:smtp:samplesmtp")
-    mailActions.sendMail(
-        "security@example.com",
-        "Security Alert - " + doorName,
-        "Invalid token " + tokenNumber + " presented at " + timestamp
-    )
-end
-```
-
-### Mail Binding Configuration
-
-To use email/SMS notifications, configure the Mail binding:
-
-**File: services/mail.cfg** (or via UI)
-
-```properties
-smtp.server=smtp.gmail.com
-smtp.port=587
-smtp.username=your-email@gmail.com
-smtp.password=your-app-password
-smtp.from=openhab@example.com
-smtp.tls=true
-smtp.auth=true
-```
-
-For SMS via email-to-SMS gateway, use the provider's email format (e.g., `phonenumber@sms.provider.com`)
-
-### Testing
-
-To test the system:
-1. Present an invalid/expired card to any Net2 reader
-2. Check OpenHAB logs: `grep "Access DENIED" /var/log/openhab/openhab.log`
-3. Verify email/SMS delivery
-4. Check that the correct door name is reported
-
-## Building Lockdown Control
-
-The lockdown channel enables emergency lockdown control of all configured doors. When lockdown is activated, the Net2 system triggers pre-configured lockdown actions (doors lock/unlock based on configured trigger/action rules).
-
-### Prerequisites
-
-**Net2 Configuration Required:**
-
-Before using the lockdown channel, you must configure lockdown triggers and actions in the Net2 software:
-
-1. **Open Net2 Software** → Configuration → Triggers/Actions
-2. **Create Lockdown Enable Trigger:**
-   - Name: "Lockdown Enable"
-   - Trigger Type: "Lockdown"
-   - Enabled: Yes
-3. **Create Lockdown Disable Trigger:**
-   - Name: "Lockdown Disable"  
-   - Trigger Type: "Lockdown" 
-   - Enabled: Yes
-4. **Configure Actions:**
-   - Add actions to each trigger defining which doors should lock/unlock
-   - Example: Lock all exterior doors during lockdown, unlock all doors when disabled
-
-### Items Configuration
-
-**File: items/net2.items**
-
-```openhab
-// Building lockdown control
-Switch Net2_Lockdown "Building Lockdown" { channel="net2:net2server:server:lockdown" }
-```
-
-### Sitemap Configuration
-
-**File: sitemaps/myhouse.sitemap**
-
-```openhab
-Frame label="Building Lockdown" icon="lock-red" {
-    Switch item=Net2_Lockdown mappings=[ON="Enable Lockdown", OFF="Disable Lockdown"] label="Building Lockdown Control"
-}
-```
-
-### Usage Examples
-
-#### Manual Control via Rules
-
-Enable lockdown manually from a rule:
-
-```openhab
-rule "Enable Lockdown on Fire Alarm"
-when
-    Item FireAlarm changed to ON
-then
-    sendCommand(Net2_Lockdown, ON)
-    logWarn("Net2", "LOCKDOWN ENABLED - Fire alarm triggered")
-end
-```
-
-Disable lockdown after situation resolved:
-
-```openhab
-rule "Disable Lockdown When Safe"
-when
-    Item EmergencyResolved changed to ON
-then
-    sendCommand(Net2_Lockdown, OFF)
-    logInfo("Net2", "Lockdown disabled - Normal operations resumed")
-end
-```
-
-#### Scheduled Lockdown
-
-Automatically enable lockdown outside business hours:
-
-```openhab
-rule "Auto Lockdown After Hours"
-when
-    Time cron "0 0 22 * * ?" // 10 PM daily
-then
-    sendCommand(Net2_Lockdown, ON)
-    logInfo("Net2", "After-hours lockdown enabled")
-end
-
-rule "Auto Unlock Business Hours"
-when
-    Time cron "0 0 7 * * MON-FRI" // 7 AM weekdays
-then
-    sendCommand(Net2_Lockdown, OFF)
-    logInfo("Net2", "Business hours - lockdown disabled")
-end
-```
-
-#### REST API Control
-
-Enable lockdown:
-```bash
-curl -X POST "http://localhost:8080/rest/items/Net2_Lockdown" \\
-  -H "Content-Type: text/plain" \\
-  -d "ON"
-```
-
-Disable lockdown:
-```bash
-curl -X POST "http://localhost:8080/rest/items/Net2_Lockdown" \\
-  -H "Content-Type: text/plain" \\
-  -d "OFF"
-```
-
-#### Python Script Integration
-
-Example Python script for external control:
-
-```python
-#!/usr/bin/env python3
-import sys
-import requests
-
-OPENHAB_URL = "http://localhost:8080"
-LOCKDOWN_ITEM = "Net2_Lockdown"
-
-def control_lockdown(enable):
-    """Enable or disable building lockdown"""
-    command = "ON" if enable else "OFF"
-    url = f"{OPENHAB_URL}/rest/items/{LOCKDOWN_ITEM}"
-    
-    try:
-        response = requests.post(
-            url,
-            data=command,
-            headers={"Content-Type": "text/plain"},
-            timeout=10
-        )
-        response.raise_for_status()
-        print(f"Lockdown {'enabled' if enable else 'disabled'}")
-        return True
-    except Exception as e:
-        print(f"Error: {e}")
-        return False
-
-if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: net2_lockdown.py [enable|disable]")
-        sys.exit(1)
-    
-    action = sys.argv[1].lower()
-    if action == "enable":
-        control_lockdown(True)
-    elif action == "disable":
-        control_lockdown(False)
-    else:
-        print("Invalid action. Use 'enable' or 'disable'")
-        sys.exit(1)
-```
-
-#### Integration with Security Systems
-
-Trigger lockdown from external security system:
-
-```openhab
-rule "Lockdown on Intruder Alert"
-when
-    Item SecuritySystem_IntruderAlert changed to ON
-then
-    sendCommand(Net2_Lockdown, ON)
-    
-    // Send notifications
-    val mailActions = getActions("mail", "mail:smtp:samplesmtp")
-    mailActions.sendMail(
-        "security@example.com",
-        "🚨 EMERGENCY LOCKDOWN ACTIVATED",
-        "Building lockdown has been automatically activated due to intruder alert.\\n\\n" +
-        "All configured doors have been locked.\\n" +
-        "Time: " + now.toString() + "\\n\\n" +
-        "Manual override required to disable lockdown."
-    )
-    
-    logError("Net2", "EMERGENCY LOCKDOWN ACTIVATED - Intruder detected")
-end
-```
-
-### Status Monitoring
-
-Monitor lockdown state changes:
-
-```openhab
-rule "Log Lockdown Status Changes"
-when
-    Item Net2_Lockdown changed
-then
-    val state = Net2_Lockdown.state.toString()
-    val message = if (state == "ON") {
-        "⚠️ LOCKDOWN ENABLED - All configured doors locked"
-    } else {
-        "✓ Lockdown disabled - Normal operations resumed"
-    }
-    
-    logInfo("Net2", message)
-    
-    // Optional: Send notification on every state change
-    val mailActions = getActions("mail", "mail:smtp:samplesmtp")
-    mailActions.sendMail(
-        "admin@example.com",
-        "Net2 Lockdown Status Change",
-        message + "\\nTime: " + now.toString()
-    )
-end
-```
-
-### Testing
-
-1. **Test Enable:**
-   ```bash
-   curl -X POST "http://localhost:8080/rest/items/Net2_Lockdown" -H "Content-Type: text/plain" -d "ON"
-   ```
-   Verify all configured doors lock
-
-2. **Test Disable:**
-   ```bash
-   curl -X POST "http://localhost:8080/rest/items/Net2_Lockdown" -H "Content-Type: text/plain" -d "OFF"
-   ```
-   Verify doors return to normal operation
-
-3. **Check Logs:**
-   ```bash
-   grep -i lockdown /var/log/openhab/openhab.log | tail -20
-   ```
-
-### Important Notes
-
-- **Fire-and-Forget:** Lockdown commands are sent immediately and do not wait for confirmation
-- **Net2 Configuration:** Ensure trigger/action rules are properly configured in Net2 software
-- **Testing:** Always test lockdown behavior in a safe, controlled environment
-- **Emergency Access:** Ensure emergency procedures include manual override methods
-- **State Updates:** The channel state reflects the last command sent, not the actual door states
-
-### Important Notes
-
-**Timestamp Comparison:**
-- The rule compares timestamps from all door items to identify the triggering door
-- This is necessary because all items trigger the rule via "received update"
-- Without timestamp comparison, the wrong door might be reported in multi-door setups
-
-**JSON State Persistence:**
-- Access denied JSON remains in the item state after the event
-- The rule uses timestamp comparison to find the most recent event
-- This ensures accurate door identification even when multiple doors have denied access history
-
-**Rule Trigger:**
-- Use "received update" (not "changed") to ensure every denied access triggers the rule
-- Each denied access has a different timestamp in the JSON, making every event unique
-
-## Channel Details
-
-## Default Door Control (Hold Open/Close)
-
-The standard `action` channel allows you to hold a door open or close it immediately. Example item and sitemap usage:
-
-**Items:**
-```openhab
-Switch Net2_Door1_Action "Door 1 Action" { channel="net2:door:server:door1:action" }
-```
-
-**Sitemap:**
-```openhab
-Switch item=Net2_Door1_Action label="Door 1 (Hold Open/Close)"
-```
-
-- Sending `ON` will hold the door open (until manually closed or timeout in Net2 config).
-- Sending `OFF` will close/lock the door.
-
-## Advanced Timed Door Control (controlTimed Channel)
-
-The new `controlTimed` channel allows you to trigger a door open for a specific time (server-side timing) and optionally customize the payload (e.g., LED flash).
-
-**Items:**
-```openhab
-Number Net2_Door1_ControlTimed "Door 1 Timed Open" { channel="net2:door:server:door1:controlTimed" }
-```
-
-**Sitemap:**
-```openhab
-Switch item=Net2_Door1_ControlTimed label="Door 1 Timed Open (1s)" mappings=[1="Open"]
-```
-
-- Sending `1` will trigger a timed open for **1 second** (1000ms).
-- Sending `5` will open for 5 seconds, `10` for 10 seconds, etc.
-- You can use rules to send custom values for different open times:
-
-```openhab
-rule "Open Door 1 for 10 seconds"
-when
-    Item Some_Trigger received command ON
-then
-    Net2_Door1_ControlTimed.sendCommand(10) // Opens for 10 seconds
-end
-```
-
-### Custom Payload (Advanced)
-
-The handler automatically converts your command (in seconds) to the correct JSON payload for the API:
-
-```json
-{
-  "DoorId": 6612642,
-  "RelayFunction": {
-    "RelayId": "Relay1",
-    "RelayAction": "TimedOpen",
-    "RelayOpenTime": 1000 // milliseconds (command value × 1000)
-  },
-  "LedFlash": 3
-}
-```
-
-- The value you send (e.g., `1`) is interpreted as **seconds** and automatically converted to milliseconds in the payload.
-- Default: 1 second if no value specified or invalid value provided.
-- LED flash count is fixed at 3 (can be customized in handler code if needed).
-
-## Summary Table
-
-| Channel         | Item Type | Usage Example                | Description                                 |
-|----------------|-----------|------------------------------|---------------------------------------------|
-| action         | Switch    | ON/OFF                       | Hold open/close door                        |
-| controlTimed   | Number    | 1, 5, 10 (seconds)           | Timed open with server-side timing          |
-
-## Author
-
-- Nanna Agesen (@Prinsessen)
-- Email: nanna@agesen.dk
-- GitHub: https://github.com/Prinsessen
-
-### Rule 1: Automatic Door Lock on Schedule
-
-**File: rules/net2_schedule_lock.rules**
+**items/net2.items**
 
 ```java
-rule "Auto-lock front door at night"
-when
-    Time cron "0 22 * * *"  // 10 PM daily
-then
-    Front_Door_Lock.sendCommand(OFF)
-    logInfo("Door", "Front door locked automatically at night")
-end
+Group gNet2Status   "Net2 door relays"
+Group gNet2Denied   "Net2 unknown tokens"
+Group gNet2Events   "Net2 access events"
+Group gNet2Lockout  "Net2 ACU lockouts"
+Group gNet2EntryLog "Net2 entry logs"
+
+// Front Door
+Switch   Front_Door_Action        "Front Door"                       <lock> { channel="net2:door:net2:frontdoor:action" }
+Switch   Front_Door_Status        "Front Door relay [%s]"            <door> (gNet2Status)   { channel="net2:door:net2:frontdoor:status" }
+Number   Front_Door_Timed         "Front Door timed open"            <lock> { channel="net2:door:net2:frontdoor:controlTimed" }
+String   Front_Door_LastUser      "Last user [%s]"                          { channel="net2:door:net2:frontdoor:lastAccessUser" }
+DateTime Front_Door_LastTime      "Last event [%1$td.%1$tm.%1$tY %1$tH:%1$tM:%1$tS]" { channel="net2:door:net2:frontdoor:lastAccessTime" }
+String   Front_Door_EntryLog      "Entry log [%s]"                          (gNet2EntryLog) { channel="net2:door:net2:frontdoor:entryLog" }
+String   Front_Door_AccessEvent   "Access event [%s]"                       (gNet2Events)   { channel="net2:door:net2:frontdoor:accessEvent" }
+String   Front_Door_Denied        "Unknown token [%s]"                      (gNet2Denied)   { channel="net2:door:net2:frontdoor:accessDenied" }
+Switch   Front_Door_Lockout       "Front Door lockout [%s]"                 (gNet2Lockout)  { channel="net2:door:net2:frontdoor:lockout" }
+Switch   Front_Door_Reinstate     "Re-instate Front Door ACU"               { channel="net2:door:net2:frontdoor:reinstate" }
+DateTime Front_Door_LastReinstate "Last re-instate [%1$tF %1$tR]"           { channel="net2:door:net2:frontdoor:lastReinstate" }
+
+// Back Door and Garage: the same pattern, for example
+Switch   Back_Door_Action         "Back Door"                        <lock> { channel="net2:door:net2:backdoor:action" }
+Switch   Back_Door_Status         "Back Door relay [%s]"             <door> (gNet2Status)   { channel="net2:door:net2:backdoor:status" }
+String   Back_Door_EntryLog       "Entry log [%s]"                          (gNet2EntryLog) { channel="net2:door:net2:backdoor:entryLog" }
+String   Back_Door_AccessEvent    "Access event [%s]"                       (gNet2Events)   { channel="net2:door:net2:backdoor:accessEvent" }
+String   Back_Door_Denied         "Unknown token [%s]"                      (gNet2Denied)   { channel="net2:door:net2:backdoor:accessDenied" }
+Switch   Back_Door_Lockout        "Back Door lockout [%s]"                  (gNet2Lockout)  { channel="net2:door:net2:backdoor:lockout" }
+
+// Bridge
+String Net2_CreateUser       "Create user"          { channel="net2:net2server:net2:createUser" }
+String Net2_DeleteUser       "Delete user"          { channel="net2:net2server:net2:deleteUser" }
+String Net2_ListAccessLevels "List access levels"   { channel="net2:net2server:net2:listAccessLevels" }
+String Net2_ListUsers        "Users"                { channel="net2:net2server:net2:listUsers" }
+Switch Net2_Lockdown         "Building lockdown"    { channel="net2:net2server:net2:lockdown", autoupdate="false" }
+String Net2_ActivityReport   "Activity report [%s]" { channel="net2:net2server:net2:activityReport" }
 ```
 
-### Rule 2: Log Access Events
+`autoupdate="false"` on `Net2_Lockdown` lets the item show what Net2 accepted: the binding sets the state only
+after Net2 answered the command with success.
 
-**File: rules/net2_access_log.rules**
+## Sitemap
+
+**sitemaps/net2.sitemap**
 
 ```java
-rule "Log door access"
-when
-    Item Front_Door_LastUser changed
-then
-    logInfo("Access", "Door accessed by: " + Front_Door_LastUser.state)
-    logInfo("Time", "Access time: " + Front_Door_LastTime.state)
-end
-```
-
-### Rule 3: Alert on Unauthorized Access Attempts
-
-**File: rules/net2_security_alert.rules**
-
-```java
-rule "Alert on access attempt"
-when
-    Item Front_Door_Status changed
-then
-    if (Front_Door_Status.state == ON) {
-        logWarn("Security", "Front door opened/unlocked at " + now)
-        // Send notification
-        sendNotification("security@example.com", "Door accessed: " + Front_Door_LastUser.state)
-    }
-end
-```
-
-### Rule 4: Integration with Alarm System
-
-**File: rules/net2_alarm_integration.rules**
-
-```java
-rule "Disarm alarm when authorized door access"
-when
-    Item Front_Door_LastUser changed
-then
-    val user = Front_Door_LastUser.state.toString()
-    if (user == "John Doe" || user == "Jane Smith") {
-        Alarm_System.sendCommand(DISARM)
-        logInfo("Alarm", "Alarm disarmed after authorized access by " + user)
-    }
-end
-```
-
-### Rule 5: Track Door Activity
-
-**File: rules/net2_activity_tracker.rules**
-
-```java
-rule "Track door activity"
-when
-    Item Front_Door_LastTime changed
-then
-    // Update door activity log
-    DoorActivity_LastAccess.postUpdate(Front_Door_LastTime.state)
-    DoorActivity_LastUser.postUpdate(Front_Door_LastUser.state)
-    
-    logInfo("Activity", "Door activity updated at " + now)
-end
-```
-
-### Rule 6: Emergency Door Unlock
-
-**File: rules/net2_emergency.rules**
-
-```java
-rule "Emergency unlock all doors"
-when
-    Item Emergency_Button received command ON
-then
-    Front_Door_Lock.sendCommand(ON)
-    Back_Door_Lock.sendCommand(ON)
-    Garage_Door_Lock.sendCommand(ON)
-    
-    logWarn("Emergency", "All doors unlocked at " + now)
-    sendNotification("admin@example.com", "Emergency unlock triggered")
-end
-```
-
-## Example sitemap Integration
-
-**File: sitemaps/net2_doors.sitemap**
-
-```
-sitemap net2_doors label="Net2 Door Control" {
+sitemap net2 label="Net2" {
     Frame label="Front Door" {
-        Switch item=Front_Door label="Front Door" icon="lock" mappings=[OFF="Lock", ON="Unlock"]
-        Text item=Front_Door_Status label="Status [%s]" icon="door"
-        Text item=Front_Door_LastUser label="Last Access: [%s]"
-        Text item=Front_Door_LastTime label="Last Time: [%1$td.%1$tm.%1$tY %1$tH:%1$tM:%1$tS]"
-        Text item=Front_Door_EntryLog label="Entry [JS(entrylog.js):%s]" icon="log"
+        Switch  item=Front_Door_Action mappings=[ON="Hold open", OFF="Close"]
+        Switch  item=Front_Door_Timed  label="Open for 5 s" mappings=[5="Open"]
+        Text    item=Front_Door_Status
+        Text    item=Front_Door_LastUser
+        Text    item=Front_Door_LastTime
+        Text    item=Front_Door_EntryLog label="Last entry [JS(net2-entrylog.js):%s]" icon="log"
+        Text    item=Front_Door_Lockout
+        Switch  item=Front_Door_Reinstate mappings=[ON="Re-instate"]
+        Text    item=Front_Door_LastReinstate
     }
-
-    Frame label="Back Door" {
-        Switch item=Back_Door label="Back Door" icon="lock"
-        Text item=Back_Door_Status label="Status [%s]"
-        Text item=Back_Door_LastUser label="Last Access: [%s]"
-    }
-
-    Frame label="Garage Door" {
-        Switch item=Garage_Door label="Garage" icon="lock"
-        Text item=Garage_Door_Status label="Status [%s]"
+    Frame label="Building" {
+        Switch  item=Net2_Lockdown mappings=[ON="Lockdown on", OFF="Lockdown off"]
+        Text    item=Net2_ActivityReport
+        Webview url="/static/net2_activity.html" height=20
     }
 }
-
-## REST Quick Test
-
-```bash
-# Create user
-curl -X POST "http://localhost:8080/rest/items/Net2_CreateUser" \
-    -H "Content-Type: text/plain" \
-    --data "Michael,Agesen,3,7654"
-
-# List access levels
-curl -X POST "http://localhost:8080/rest/items/Net2_ListAccessLevels" \
-    -H "Content-Type: text/plain" \
-    --data "REFRESH"
-
-# Delete user (replace 79 with the created ID)
-curl -X POST "http://localhost:8080/rest/items/Net2_DeleteUser" \
-    -H "Content-Type: text/plain" \
-    --data "79"
-```
 ```
 
-## Items Configuration with Persistence
-
-**File: items/net2_doors.items**
-
-```
-Group gNet2Doors "Net2 Doors" <lock>
-
-Group gFrontDoor "Front Door" <lock> (gNet2Doors)
-Switch Front_Door "Front Door" <lock> (gFrontDoor) { channel="net2:door:myserver:fordoor:action" }
-Switch Front_Door_Status "Status" <door> (gFrontDoor) { channel="net2:door:myserver:fordoor:status" }
-String Front_Door_LastUser "Last User" (gFrontDoor) { channel="net2:door:myserver:fordoor:lastAccessUser" }
-DateTime Front_Door_LastTime "Last Access" (gFrontDoor) { channel="net2:door:myserver:fordoor:lastAccessTime" }
-
-Group gBackDoor "Back Door" <lock> (gNet2Doors)
-Switch Back_Door "Back Door" <lock> (gBackDoor) { channel="net2:door:myserver:backdoor:action" }
-Switch Back_Door_Status "Status" <door> (gBackDoor) { channel="net2:door:myserver:backdoor:status" }
-
-Group gGarageDoor "Garage" <lock> (gNet2Doors)
-Switch Garage_Door "Garage Door" <lock> (gGarageDoor) { channel="net2:door:myserver:garage:action" }
-Switch Garage_Door_Status "Status" <door> (gGarageDoor) { channel="net2:door:myserver:garage:status" }
-
-// Additional items for tracking
-Group gDoorActivity "Door Activity"
-DateTime DoorActivity_LastAccess "Last Access Time" (gDoorActivity)
-String DoorActivity_LastUser "Last User" (gDoorActivity)
-
-// Emergency control
-Switch Emergency_Button "🚨 Emergency Unlock" <alarm> (gNet2Doors)
-```
-
-## Persistence Configuration
-
-**File: persistence/net2_doors.persist**
-
-```
-Strategies {
-    everyMinute : "0 * * * * ?"
-    everyHour   : "0 0 * * * ?"
-    everyDay    : "0 0 0 * * ?"
-    default     = everyDay
-}
-
-Items {
-    // Track all door access
-    gDoorActivity* : strategy=everyMinute, everyDay
-    
-    // Store door status changes
-    Front_Door_Status,
-    Back_Door_Status,
-    Garage_Door_Status
-    : strategy=everyChange, everyDay
-    
-    // Track unlock events
-    Front_Door,
-    Back_Door,
-    Garage_Door
-    : strategy=everyChange
-}
-```
-
-## Grafana Dashboard Configuration
-
-Example queries for Grafana using RRD4j persistence:
-
-```json
-{
-  "panels": [
-    {
-      "title": "Door Access Count (Daily)",
-      "targets": [
-        {
-          "query": "SELECT COUNT(*) FROM items WHERE itemname LIKE '%LastUser%' GROUP BY day"
-        }
-      ]
-    },
-    {
-      "title": "Door Status Timeline",
-      "targets": [
-        {
-          "query": "SELECT time, state FROM Front_Door_Status ORDER BY time DESC LIMIT 1000"
-        }
-      ]
-    }
-  ]
-}
-```
-
-## API Integration Example (Python)
-
-```python
-#!/usr/bin/env python3
-import requests
-
-# Control door via OpenHAB
-OPENHAB_API = "https://openhab.example.com/rest/items"
-
-def unlock_door(door_name):
-    """Unlock a door via OpenHAB binding"""
-    response = requests.post(
-        f"{OPENHAB_API}/{door_name}/command",
-        data="ON",
-        headers={"Content-Type": "text/plain"}
-    )
-    return response.status_code == 200
-
-def lock_door(door_name):
-    """Lock a door via OpenHAB binding"""
-    response = requests.post(
-        f"{OPENHAB_API}/{door_name}/command",
-        data="OFF",
-        headers={"Content-Type": "text/plain"}
-    )
-    return response.status_code == 200
-
-# Usage
-if __name__ == "__main__":
-    unlock_door("Front_Door")
-    lock_door("Front_Door")
-```
-
-## Build & Deploy Instructions
-
-```bash
-# Build the binding
-cd /etc/openhab/net2-binding
-mvn clean install
-
-# Copy JAR to OpenHAB addons
-cp target/org.openhab.binding.net2-*.jar /opt/openhab/addons/
-
-# Restart OpenHAB
-systemctl restart openhab
-
-# Check binding is loaded
-tail -f /var/log/openhab/openhab.log | grep net2
-```
-
-## Entry Logging Examples
-
-### Complete Entry Logging Setup
-
-**Items Configuration:**
-
-```openhab
-// Entry Log Items (JSON format for Grafana)
-String Net2_Door1_EntryLog "Entry Log [%s]" { channel="net2:door:server:door1:entryLog" }
-String Net2_Door2_EntryLog "Entry Log [%s]" { channel="net2:door:server:door2:entryLog" }
-String Net2_Door3_EntryLog "Entry Log [%s]" { channel="net2:door:server:door3:entryLog" }
-String Net2_Door4_EntryLog "Entry Log [%s]" { channel="net2:door:server:door4:entryLog" }
-String Net2_Door5_EntryLog "Entry Log [%s]" { channel="net2:door:server:door5:entryLog" }
-```
-
-**Transform for UI Display:**
-
-File: `/etc/openhab/transform/entrylog.js`
+**transform/net2-entrylog.js** (JS transformation, needs the JS Scripting add-on):
 
 ```javascript
-(function(data) {
-    if (!data || data === "NULL") {
-        return "No entries yet";
-    }
-    try {
-        var entry = JSON.parse(data);
-        var time = entry.timestamp.substring(11, 19);
-        return entry.firstName + " " + entry.lastName + " entered " + entry.doorName + " at " + time;
-    } catch (e) {
-        return "Error parsing entry log";
-    }
+(function (data) {
+  // an item without a state can hand the transform the format pattern instead of a value
+  if (!data || data === 'NULL' || data === 'UNDEF' || data.charAt(0) === '%') {
+    return 'No entries yet';
+  }
+  try {
+    const e = JSON.parse(data);
+    return e.firstName + ' ' + e.lastName + ' at ' + e.doorName + ', ' + e.timestamp.substring(11, 19);
+  } catch (err) {
+    return 'Unreadable entry';
+  }
 })(input)
 ```
 
-**Sitemap Display:**
+## Keeping action in step with status
 
-```openhab
-Frame label="Fordør Kirkegade" {
-    Text item=Net2_Door1_EntryLog label="Last Entry [JS(entrylog.js):%s]" icon="log"
-}
+`status` follows the relay live (SignalR `DoorStatusEvents`); `action` changes only on a command and on the
+REST poll (every `refreshInterval` seconds). If the `action` switch in a UI should follow the door between
+polls, copy the state across. One rule covers every door whose items follow the `<Door>_Status` /
+`<Door>_Action` naming:
+
+**rules/net2-sync.rules**
+
+```java
+rule "Net2 relay state to action switch"
+when
+    Member of gNet2Status changed
+then
+    val actionItem = triggeringItem.name.replace("_Status", "_Action")
+    postUpdate(actionItem, triggeringItem.state.toString)
+end
 ```
 
-**Persistence Configuration:**
+`postUpdate` changes only the item's state; it sends nothing to Net2.
 
-```openhab
-Items {
-    Net2_Door1_EntryLog : strategy = everyChange
-}
-```
+## Door control
 
-### Entry Log Output Format
+### Hold open and close (`action`)
 
-**JSON Format (stored in item):**
+- ON holds the door open (`POST /api/v1/commands/door/holdopen`) until it is closed again.
+- OFF closes it (`POST /api/v1/commands/door/close`).
+
+### Timed open (`controlTimed`)
+
+The value is the open time in seconds. The binding sends:
+
 ```json
-{
-  "firstName": "Nanna",
-  "lastName": "Agesen",
-  "doorName": "Front Door",
-  "timestamp": "2026-01-10T18:48:34",
-  "doorId": 6612642
-}
+{"DoorId":1234567,"RelayFunction":{"RelayId":"Relay1","RelayAction":"TimedOpen","RelayOpenTime":5000},"LedFlash":3}
 ```
 
-**UI Display (via transform):**
-```
-Last Entry: Nanna Agesen entered Front Door at 18:48:34
+`RelayOpenTime` is the value times 1000 (milliseconds). Relay and LED flash count are fixed in the code. The
+channel state becomes the value sent once Net2 accepted it (HTTP 200 or 202).
+
+```java
+rule "Open the front door for 10 seconds"
+when
+    Item Doorbell_Button received command ON
+then
+    Front_Door_Timed.sendCommand(10)
+end
 ```
 
-### Testing Entry Logging
+On a door with a momentary relay (a garage door) every command, timed or not, pulses the relay and toggles
+the door. Make sure no rule sends one by accident.
 
-**Monitor entry logs:**
+## User management
+
+### List users
+
+```java
+Net2_ListUsers.sendCommand("ON")
+```
+
+The state of `Net2_ListUsers` becomes Net2's user list as JSON, with every field whose name contains "pin"
+removed. Read it with:
+
 ```bash
-tail -f /var/log/openhab/openhab.log | grep "Entry log"
+curl -s "http://localhost:8080/rest/items/Net2_ListUsers/state"
 ```
 
-**Check item value:**
+The field names are those of the Net2 API (for example `id`, `firstName`, `lastName`, expiry and activation
+dates, telephone, access level). Check your server's answer rather than relying on a fixed list. The state
+reaches `events.log` and persistence; leave `Net2_ListUsers` out of persistence unless you need it.
+
+### List access levels
+
+```java
+Net2_ListAccessLevels.sendCommand("ON")
+```
+
+The result goes to `openhab.log` only:
+
 ```bash
-curl -s http://localhost:8080/rest/items/Net2_Door1_EntryLog | python3 -m json.tool
+grep "Access levels" /var/log/openhab/openhab.log | tail -1
+# Access levels: [1:Public] [2:Staff] [3:Admin]
 ```
 
-### Grafana Integration
+### Create a user
 
-See complete Grafana setup guide below in the **Entry Log Dashboard** section.
-
----
-
-## Entry Log Dashboard with InfluxDB and Grafana
-
-This example shows how to create a comprehensive entry log dashboard displaying door access events from all doors in a clean, sorted table.
-
-### Overview
-
-The Net2 binding provides real-time entry logs via the `entryLog` channel. Each entry contains JSON data with:
-- `firstName` - User's first name
-- `lastName` - User's last name  
-- `doorName` - Name of the door accessed
-- `timestamp` - Time of entry (ISO 8601 format)
-- `doorId` - Unique door identifier
-
-This guide shows how to persist these logs to InfluxDB and visualize them in Grafana.
-
-### Step 1: Items Configuration
-
-**File: items/net2.items**
-
-```openhab
-// Door 1 - Entry logging items
-String Net2_Door1_EntryLog "Entry Log [%s]" { channel="net2:door:server:door1:entryLog" }
-Number Net2_Door1_EntryCount "Entry Count [%d]"
-
-// Door 2 - Entry logging items
-String Net2_Door2_EntryLog "Entry Log [%s]" { channel="net2:door:server:door2:entryLog" }
-Number Net2_Door2_EntryCount "Entry Count [%d]"
-
-// Door 3 - Entry logging items
-String Net2_Door3_EntryLog "Entry Log [%s]" { channel="net2:door:server:door3:entryLog" }
-Number Net2_Door3_EntryCount "Entry Count [%d]"
-
-// Door 4 - Entry logging items
-String Net2_Door4_EntryLog "Entry Log [%s]" { channel="net2:door:server:door4:entryLog" }
-Number Net2_Door4_EntryCount "Entry Count [%d]"
-
-// Door 5 - Entry logging items
-String Net2_Door5_EntryLog "Entry Log [%s]" { channel="net2:door:server:door5:entryLog" }
-Number Net2_Door5_EntryCount "Entry Count [%d]"
+```java
+// firstName,lastName,accessLevel,pin - the access level as ID or name
+Net2_CreateUser.sendCommand("John,Doe,Staff,1234")
 ```
 
-**What these items do:**
-- `EntryLog` - Receives JSON entry data from the binding (persisted to InfluxDB)
-- `EntryCount` - Auto-incrementing counter providing unique ID for each entry (optional but useful)
+The log shows "User created successfully with ID: ..." and whether the access level was assigned. If the access
+level is not found, the user is created without one and a WARN is logged.
 
-### Step 2: Rules Configuration
+### Delete a user
 
-**File: rules/net2_entry_counter.rules**
+```java
+Net2_DeleteUser.sendCommand("79")   // the user ID, from listUsers
+```
 
-```openhab
-// ==============================================
-// Net2 Entry Log Counter
-// Provides unique ID for each entry
-// ==============================================
+### From the REST API or the console
 
-rule "Net2 Door1 Entry Counter"
+The REST API takes the command as the request body of `POST /rest/items/{itemName}`. Add
+`-H "Authorization: Bearer <API token>"` if your openHAB requires authentication.
+
+```bash
+curl -X POST "http://localhost:8080/rest/items/Net2_CreateUser" -H "Content-Type: text/plain" -d "John,Doe,3,1234"
+curl -X POST "http://localhost:8080/rest/items/Net2_ListAccessLevels" -H "Content-Type: text/plain" -d "ON"
+curl -X POST "http://localhost:8080/rest/items/Net2_DeleteUser" -H "Content-Type: text/plain" -d "79"
+```
+
+Karaf console (`openhab-cli console`): `openhab:send Net2_ListUsers ON`.
+
+## Reacting to an entry
+
+A rule that should react to someone **being let in** must trigger on `entryLog`, never on `lastAccessUser`.
+`lastAccessUser` changes on every event that names a user, refusals included: a badge that Net2 refuses, an ACU
+that refuses everyone, or a lockdown would all change it. A rule on `lastAccessUser` that disarms an alarm would
+disarm it for a person who was refused at the door.
+
+**rules/net2-alarm.rules**
+
+```java
+rule "Disarm the alarm when John Doe is let in at the front door"
 when
-    Item Net2_Door1_EntryLog changed
+    Item Front_Door_EntryLog changed
 then
-    var count = 0
-    if (Net2_Door1_EntryCount.state instanceof Number) {
-        count = (Net2_Door1_EntryCount.state as Number).intValue()
+    val json = Front_Door_EntryLog.state.toString
+    val first = transform("JSONPATH", "$.firstName", json)
+    val last  = transform("JSONPATH", "$.lastName", json)
+    if (first == "John" && last == "Doe") {
+        Alarm_System.sendCommand("DISARM")
+        logInfo("net2", "Alarm disarmed after entry by John Doe")
     }
-    count = count + 1
-    
-    // Update counter only - provides unique ID for each entry
-    Net2_Door1_EntryCount.postUpdate(count)
-end
-
-rule "Net2 Door2 Entry Counter"
-when
-    Item Net2_Door2_EntryLog changed
-then
-    var count = 0
-    if (Net2_Door2_EntryCount.state instanceof Number) {
-        count = (Net2_Door2_EntryCount.state as Number).intValue()
-    }
-    count = count + 1
-    
-    // Update counter only - provides unique ID for each entry
-    Net2_Door2_EntryCount.postUpdate(count)
-end
-
-rule "Net2 Door3 Entry Counter"
-when
-    Item Net2_Door3_EntryLog changed
-then
-    var count = 0
-    if (Net2_Door3_EntryCount.state instanceof Number) {
-        count = (Net2_Door3_EntryCount.state as Number).intValue()
-    }
-    count = count + 1
-    
-    // Update counter only - provides unique ID for each entry
-    Net2_Door3_EntryCount.postUpdate(count)
-end
-
-rule "Net2 Door4 Entry Counter"
-when
-    Item Net2_Door4_EntryLog changed
-then
-    var count = 0
-    if (Net2_Door4_EntryCount.state instanceof Number) {
-        count = (Net2_Door4_EntryCount.state as Number).intValue()
-    }
-    count = count + 1
-    
-    // Update counter only - provides unique ID for each entry
-    Net2_Door4_EntryCount.postUpdate(count)
-end
-
-rule "Net2 Door5 Entry Counter"
-when
-    Item Net2_Door5_EntryLog changed
-then
-    var count = 0
-    if (Net2_Door5_EntryCount.state instanceof Number) {
-        count = (Net2_Door5_EntryCount.state as Number).intValue()
-    }
-    count = count + 1
-    
-    // Update counter only - provides unique ID for each entry
-    Net2_Door5_EntryCount.postUpdate(count)
 end
 ```
 
-**What these rules do:**
-- Automatically increment a counter each time a door entry occurs
-- Provides unique ID for each entry (useful for tracking and debugging)
-- Counter persists to InfluxDB alongside the JSON data
+Every entry carries its own timestamp, so `changed` fires for each one.
 
-### Step 3: Persistence Configuration
+## Access denied alerts
 
-**File: persistence/influxdb.persist**
+Two channels report refusals:
 
-```openhab
+| Channel | What | Contains |
+|---------|------|----------|
+| `accessDenied` | a token Net2 does not know (event type 23) | `tokenNumber`, `doorName`, `timestamp`, `doorId` |
+| `accessEvent` | every event that names a user, granted or refused | names, door, time, `eventType`, `eventSubType`, names of the type when known |
+
+A refusal of a known user is an `accessEvent` with `eventType` 16, 17, 24, 25, 27 or 112 (see the event type
+table in the README). 16/17 with sub type 82 is also the normal step before a PIN; it is followed by a 26 within
+seconds and is not worth an alert on its own.
+
+The binding also logs every unknown token at WARN: `Access DENIED at door Front Door: Token 7654321 at ...`.
+
+### Mail binding
+
+The alerts below use the Mail binding. An SMTP thing, for example in **things/mail.things**:
+
+```java
+Thing mail:smtp:samplesmtp "SMTP" [ hostname="smtp.example.com", port="587", security="STARTTLS",
+        sender="openhab@example.com", username="openhab@example.com", password="secret" ]
+```
+
+For an SMS, send the mail to your provider's e-mail-to-SMS address, if it has one.
+
+### Unknown tokens, all doors in one rule
+
+**rules/net2-denied.rules**
+
+```java
+rule "Net2 unknown token"
+when
+    Member of gNet2Denied changed
+then
+    val json = triggeringItem.state.toString
+    if (json == "NULL" || json == "UNDEF" || !json.contains("tokenNumber")) {
+        return
+    }
+    val door  = transform("JSONPATH", "$.doorName", json)
+    val token = transform("JSONPATH", "$.tokenNumber", json)
+    val time  = transform("JSONPATH", "$.timestamp", json)
+
+    val text = "An unknown token was presented at " + door + ".\n" +
+               "Token: " + token + "\n" +
+               "Time: " + time
+    logWarn("net2", "Unknown token " + token + " at " + door)
+
+    val mail = getActions("mail", "mail:smtp:samplesmtp")
+    mail.sendMail("security@example.com", "Net2: unknown token at " + door, text)
+end
+```
+
+`triggeringItem` is the door's item that changed, so there is no need to compare timestamps across doors.
+
+### Repeated unknown tokens
+
+```java
+var Timer net2RepeatTimer = null
+var int net2Attempts = 0
+var String net2LastToken = ""
+
+rule "Net2 repeated unknown token"
+when
+    Member of gNet2Denied changed
+then
+    val json = triggeringItem.state.toString
+    if (!json.contains("tokenNumber")) {
+        return
+    }
+    val token = transform("JSONPATH", "$.tokenNumber", json)
+    if (token == net2LastToken) {
+        net2Attempts = net2Attempts + 1
+    } else {
+        net2LastToken = token
+        net2Attempts = 1
+    }
+    if (net2Attempts == 3) {
+        val mail = getActions("mail", "mail:smtp:samplesmtp")
+        mail.sendMail("security@example.com", "Net2: repeated attempts",
+            "Token " + token + " was presented 3 times within 5 minutes.")
+    }
+    net2RepeatTimer?.cancel()
+    net2RepeatTimer = createTimer(now.plusMinutes(5), [ |
+        net2Attempts = 0
+        net2LastToken = ""
+    ])
+end
+```
+
+### Refused known users (JS Scripting)
+
+**automation/js/net2-refusals.js**
+
+```javascript
+const { rules, triggers, items } = require('openhab');
+
+// Net2's refusal types; 16/17 with sub type 82 is the step before a PIN, not a refusal on its own
+const REFUSALS = [16, 17, 24, 25, 27, 112];
+
+rules.JSRule({
+  name: 'Net2 refused known user',
+  description: 'Log refusals of known users at any door',
+  triggers: [triggers.GroupStateChangeTrigger('gNet2Events')],
+  execute: (event) => {
+    let e;
+    try {
+      e = JSON.parse(items.getItem(event.itemName).state);
+    } catch (err) {
+      return;
+    }
+    if (!REFUSALS.includes(e.eventType)) {
+      return;
+    }
+    if ((e.eventType === 16 || e.eventType === 17) && e.eventSubType === 82) {
+      return;
+    }
+    console.warn(`net2-refusals: ${e.firstName} ${e.lastName} refused at ${e.doorName} ` +
+      `(type ${e.eventType}${e.eventDescription ? ' ' + e.eventDescription : ''})`);
+  }
+});
+```
+
+### Camera recording on an unknown token
+
+```java
+rule "Record the front door camera on an unknown token"
+when
+    Item Front_Door_Denied changed
+then
+    Front_Door_Camera_Record.sendCommand(ON)
+end
+```
+
+## ACU lockout notification
+
+The binding turns `lockout` ON when one door refuses known users `lockoutThreshold` times within
+`lockoutWindow` minutes with no entry between (README: [ACU lockout and Re-Instate](README.md#acu-lockout-and-re-instate)).
+This rule tells someone, for every door in `gNet2Lockout`. The notification needs the openHAB Cloud Connector;
+replace it with the mail action or another channel if you do not use it.
+
+**automation/js/net2-lockout.js**
+
+```javascript
+const { rules, triggers, items, actions } = require('openhab');
+
+rules.JSRule({
+  name: 'Net2 ACU lockout',
+  description: 'Tell someone when a door refuses known users, and when it lets people in again',
+  triggers: [
+    triggers.GroupStateChangeTrigger('gNet2Lockout', 'OFF', 'ON'),    // OFF -> ON only: a restored ON arrives as NULL -> ON
+    triggers.GroupStateChangeTrigger('gNet2Lockout', 'ON', 'OFF')
+  ],
+  execute: (event) => {
+    const door = items.getItem(event.itemName).label;
+    const text = event.newState === 'ON'
+      ? `${door}: the Net2 ACU refuses known users. A Re-Instate usually cures it.`
+      : `${door}: access granted again, the lockout is over.`;
+    console.warn('net2-lockout: ' + text);
+    actions.notificationBuilder(text).send();
+  }
+});
+```
+
+To re-instate by hand, send ON to the door's `reinstate` item (from the sitemap above, or
+`items.getItem('Front_Door_Reinstate').sendCommand('ON')`). With `autoReinstate=true` the binding does it
+itself; do not also re-instate from a rule then, or the two will both send Re-Instates.
+
+A manual Re-Instate does not turn `lockout` OFF; the next entry does. `Front_Door_LastReinstate` shows when Net2
+last accepted one.
+
+## Building lockdown
+
+The `lockdown` bridge channel switches the Net2 lockdown on (ON) and off (OFF) with
+`POST /api/v1/commands/controlLockdown`. Which doors lock, and how, is configured in the Net2 software; the
+binding only sends the command. The command waits for Net2's answer, and the channel state changes only when
+Net2 accepted it. While a lockdown switched on through this channel is active, the lockout guard does not count
+refusals (a lockdown refuses everyone on purpose, and a Re-Instate would lift it at the ACU).
+
+Route every lockdown that openHAB starts through this channel. The binding does not see a lockdown started
+elsewhere except through Net2's event name, and after an openHAB restart it does not know about a lockdown that
+was already on.
+
+### From an intruder alarm
+
+Trigger a lockdown only on an actual alarm, never on an "armed" or "arming" state. In a real case an arming
+state was taken for an alarm, and the lockdown locked every door for everyone with a valid token.
+
+```java
+rule "Net2 lockdown on intruder alarm"
+when
+    Item Intruder_Alarm_Active changed to ON     // the alarm itself, not the armed state
+then
+    Net2_Lockdown.sendCommand(ON)
+    logWarn("net2", "Lockdown requested: intruder alarm")
+end
+
+rule "Net2 lockdown off"
+when
+    Item Lockdown_Reset_Button received command ON
+then
+    Net2_Lockdown.sendCommand(OFF)
+    logInfo("net2", "Lockdown off requested")
+end
+```
+
+There is no example here for a fire alarm. Fire usually means doors must release, not lock; how doors behave
+in a fire is a matter for the fire installation and the Net2 configuration, not for an openHAB rule.
+
+A lockdown is not a schedule. For doors that should be locked at night, use the Net2 software's own time
+settings, or the `action` channel (see [Other rules](#other-rules)).
+
+### Logging lockdown changes
+
+```java
+rule "Net2 lockdown state"
+when
+    Item Net2_Lockdown changed
+then
+    if (Net2_Lockdown.state == ON) {
+        logWarn("net2", "Lockdown is ON (accepted by Net2)")
+    } else {
+        logInfo("net2", "Lockdown is OFF (accepted by Net2)")
+    }
+end
+```
+
+With `autoupdate="false"` on the item, this rule fires only for states Net2 accepted.
+
+### From the REST API
+
+```bash
+curl -X POST "http://localhost:8080/rest/items/Net2_Lockdown" -H "Content-Type: text/plain" -d "ON"
+curl -X POST "http://localhost:8080/rest/items/Net2_Lockdown" -H "Content-Type: text/plain" -d "OFF"
+grep -i lockdown /var/log/openhab/openhab.log | tail -20
+```
+
+Test a lockdown in a controlled situation first, and check that people can still leave the building.
+
+## Other rules
+
+### Lock the front door at night
+
+```java
+rule "Close the front door at 22:00"
+when
+    Time cron "0 0 22 * * ?"
+then
+    Front_Door_Action.sendCommand(OFF)
+end
+
+rule "Hold the front door open on weekday mornings"
+when
+    Time cron "0 0 7 ? * MON-FRI"
+then
+    Front_Door_Action.sendCommand(ON)
+end
+```
+
+openHAB cron expressions have a seconds field, and either day-of-month or day-of-week must be `?`.
+
+### Emergency unlock
+
+```java
+rule "Emergency: hold all doors open"
+when
+    Item Emergency_Button received command ON
+then
+    Front_Door_Action.sendCommand(ON)
+    Back_Door_Action.sendCommand(ON)
+    logWarn("net2", "All doors held open by the emergency button")
+end
+```
+
+Leave doors with a momentary relay (garage doors) out of such a rule: a command toggles them.
+
+### Log every event at a door
+
+```java
+rule "Front door event"
+when
+    Item Front_Door_LastTime changed
+then
+    logInfo("net2", "Front door event, last user: " + Front_Door_LastUser.state)
+end
+```
+
+This fires for entries and refusals alike.
+
+## Persistence
+
+**persistence/influxdb.persist**
+
+```java
 Strategies {
-    everyChange : "everyChange"
+    default = everyChange
 }
 
 Items {
-    // Entry log JSON - contains all entry data
-    Net2_Door1_EntryLog : strategy = everyChange
-    Net2_Door2_EntryLog : strategy = everyChange
-    Net2_Door3_EntryLog : strategy = everyChange
-    Net2_Door4_EntryLog : strategy = everyChange
-    Net2_Door5_EntryLog : strategy = everyChange
-    
-    // Entry counters - unique ID for each entry
-    Net2_Door1_EntryCount : strategy = everyChange, restoreOnStartup
-    Net2_Door2_EntryCount : strategy = everyChange, restoreOnStartup
-    Net2_Door3_EntryCount : strategy = everyChange, restoreOnStartup
-    Net2_Door4_EntryCount : strategy = everyChange, restoreOnStartup
-    Net2_Door5_EntryCount : strategy = everyChange, restoreOnStartup
+    gNet2EntryLog*, gNet2Events*, gNet2Denied* : strategy = everyChange
+    gNet2Status*                               : strategy = everyChange
 }
 ```
 
-**Configuration notes:**
-- `everyChange` strategy persists data whenever the item changes
-- `restoreOnStartup` restores counter values after OpenHAB restart
-- Only the `EntryLog` JSON items are needed for Grafana - counters are optional
+`everyChange` is built in; it needs no definition under `Strategies`. Each entry and access event carries its
+own timestamp, so every event is a change and is stored. String items are stored in InfluxDB like any other
+item.
 
-**InfluxDB Configuration:**
-- Configure InfluxDB persistence in OpenHAB Main UI
-- Settings → Persistence → InfluxDB
-- Ensure connection is working (check openhab.log for "InfluxDB persistence service started")
+Do not restore `lockout` items at start-up (no `restoreOnStartup` for them in any `.persist` file): the binding's
+lockout guard starts empty after a restart, and a restored ON would be stale.
 
-### Step 4: Grafana Dashboard Setup
+## Entry log dashboard with InfluxDB and Grafana
 
-#### 4.1 Create New Panel
+A Grafana table of all entries at all doors, newest first, from the `entryLog` items persisted to InfluxDB 2
+(Flux). It uses the persistence file above.
 
-1. Open Grafana
-2. Create new dashboard or open existing one
-3. Click "Add panel" → "Add a new panel"
-4. Select **Table** visualization type (top right dropdown)
+openHAB's InfluxDB persistence writes each item as its own measurement (the item name) with the state in the
+field `value`. Use your own bucket name below. With InfluxDB 1.8 and Flux, the bucket is written as
+`database/retention`, for example `openhab/autogen`.
 
-#### 4.2 Configure Query
+### Query
 
-In the **Query** tab, enter this Flux query:
+Panel type **Table**, query (Flux):
 
 ```flux
-union(tables: [
-  from(bucket: "openhab_db/autogen")
-    |> range(start: -24h)
-    |> filter(fn: (r) => r._measurement == "Net2_Door1_EntryLog"),
-  from(bucket: "openhab_db/autogen")
-    |> range(start: -24h)
-    |> filter(fn: (r) => r._measurement == "Net2_Door2_EntryLog"),
-  from(bucket: "openhab_db/autogen")
-    |> range(start: -24h)
-    |> filter(fn: (r) => r._measurement == "Net2_Door3_EntryLog"),
-  from(bucket: "openhab_db/autogen")
-    |> range(start: -24h)
-    |> filter(fn: (r) => r._measurement == "Net2_Door4_EntryLog"),
-  from(bucket: "openhab_db/autogen")
-    |> range(start: -24h)
-    |> filter(fn: (r) => r._measurement == "Net2_Door5_EntryLog")
-])
-|> sort(columns: ["_time"], desc: true)
-```
-
-**Query explanation:**
-- `union()` combines all 5 doors into a single data stream
-- `range(start: -24h)` shows last 24 hours (adjust as needed: `-7d`, `-1h`, etc.)
-- `filter()` selects the EntryLog measurements for each door
-- `sort()` orders by time (newest first)
-
-**For single door dashboard:**
-```flux
-from(bucket: "openhab_db/autogen")
-  |> range(start: -24h)
-  |> filter(fn: (r) => r._measurement == "Net2_Door1_EntryLog")
+from(bucket: "openhab")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r._measurement =~ /_EntryLog$/ and r._field == "value")
+  |> group()
   |> sort(columns: ["_time"], desc: true)
 ```
 
-#### 4.3 Configure Transformations
+`group()` puts all doors into one table, so no Merge transformation is needed. For one door, filter on its
+measurement instead: `r._measurement == "Front_Door_EntryLog"`. For refusals, use the `_AccessEvent`
+measurements and filter `eventType` in Grafana after the field extraction.
 
-Click the **Transform** tab and add these transformations **in order**:
+### Transformations
 
-**Transformation 1: Extract fields**
-- Click "Add transformation"
-- Select "Extract fields"
-- Source: `_value`
-- Format: `JSON`
+1. **Extract fields**: source `_value`, format JSON. This gives `firstName`, `lastName`, `doorName`,
+   `timestamp`, `doorId`, `eventType`, `eventSubType` and `eventDescription`.
+2. **Organize fields**: hide `_value`, `_measurement`, `_field` and what you do not need (`doorId`,
+   `eventSubType`); rename `firstName` to First Name, `lastName` to Last Name, `doorName` to Door,
+   `timestamp` to Entry Time, `eventDescription` to How.
 
-This extracts firstName, lastName, doorName, timestamp, doorId from the JSON.
-
-**Transformation 2: Merge**
-- Click "Add transformation"
-- Select "Merge"
-
-This combines all door data frames into a single table.
-
-**Transformation 3: Sort by**
-- Click "Add transformation"
-- Select "Sort by"
-- Field: `timestamp`
-- Enable "Reverse" toggle (for descending order - newest first)
-
-This ensures entries are sorted by actual door entry time.
-
-**Transformation 4: Organize fields**
-- Click "Add transformation"
-- Select "Organize fields"
-- **Hide these columns** (click eye icon):
-  - `_value` (raw JSON)
-  - `_measurement` (duplicate measurement name)
-  - `doorId` (if you don't need it)
-- **Keep visible:**
-  - `_time` (or `Time`)
-  - `firstName`
-  - `lastName`
-  - `doorName`
-  - `timestamp`
-- **Rename columns** (click column name to edit):
-  - `firstName` → `First Name`
-  - `lastName` → `Last Name`
-  - `doorName` → `Door Name`
-  - `timestamp` → `Entry Time`
-  - `_time` → `Logged At`
-
-#### 4.4 Optional: Format Timestamp
-
-To display timestamp in readable format instead of ISO format:
-
-1. Scroll to **"Overrides"** section in right sidebar
-2. Click **"Add field override"**
-3. Select: **"Fields with name"** → `timestamp`
-4. Click **"Add override property"** → **"Standard options"** → **"Unit"**
-5. Select a date format:
-   - `YYYY-MM-DD HH:mm:ss` → displays as `2026-01-11 11:22:50`
-   - `MM/DD/YYYY h:mm:ss a` → displays as `01/11/2026 11:22:50 AM`
-   - Or choose your preferred format from the list
-
-**Result:** Timestamp displays as `2026-01-11 11:22:50` instead of `2026-01-11T11:22:50`
-
-#### 4.5 Panel Options
-
-In the right sidebar:
-
-**Panel options:**
-- Title: "Door Entry Logs" (or your preferred name)
-- Description: "Real-time door access events from all doors"
-
-**Table options:**
-- Show table header: **ON**
-- Cell display mode: **Auto** (or **Color text**)
-
-**Standard options:**
-- Unit: Leave as default for string fields
-- Decimals: Not applicable for text data
-
-#### 4.6 Save Dashboard
-
-1. Click "Apply" (top right)
-2. Click "Save dashboard" (top right)
-3. Name it: "Door Entry Logs"
-4. Click "Save"
+To show `timestamp` as a date, add a field override on it: Standard options -> Unit -> a date/time format.
 
 ### Result
 
-Your dashboard will display a clean table like this:
-
-| Time | First Name | Last Name | Door Name | Entry Time |
-|------|------------|-----------|-----------|------------|
-| 2026-01-11 10:17:35 | Nanna | Agesen | Front Door | 2026-01-11 10:17:35 |
-| 2026-01-11 08:25:02 | Nanna | Agesen | Front Door | 2026-01-11 08:25:01 |
-| 2026-01-10 21:27:24 | Nanna | Agesen | Front Door | 2026-01-10 21:27:23 |
-| 2026-01-10 19:36:41 | Nanna | Agesen | Garage Port | 2026-01-10 19:36:40 |
+| Entry Time | First Name | Last Name | Door | How |
+|------------|------------|-----------|------|-----|
+| 2026-10-27 10:17:35 | John | Doe | Front Door | Access permitted - token only |
+| 2026-10-27 08:25:01 | Jane | Doe | Back Door | Access permitted - PIN only |
 
 ### Troubleshooting
 
-**No data showing in Grafana:**
-1. Check InfluxDB persistence is running:
-   ```bash
-   grep -i "influx.*started" /var/log/openhab/openhab.log
-   ```
-2. Verify items are persisting:
-   ```bash
-   grep "Net2.*EntryLog" /var/log/openhab/events.log | tail -5
-   ```
-3. Test InfluxDB query in Data Explorer (Grafana)
+- **No data:** check that the items reach openHAB (`grep EntryLog /var/log/openhab/events.log | tail -5`) and
+  that the measurements exist in the bucket (InfluxDB UI, Data Explorer).
+- **"Data is missing a number field":** use the Table panel type; the values are strings.
+- **Wrong order:** keep `sort(columns: ["_time"], desc: true)` after `group()`, or add a Sort by
+  transformation on `timestamp`.
 
-**"Data is missing a number field" error:**
-- Ensure panel type is **Table**, not "Time series" or "Graph"
-- String data only works in Table visualizations
+### Retention
 
-**"Organize fields only works with a single frame" error:**
-- Add **Merge** transformation before **Organize fields**
-- Ensure **Extract fields** runs first
+In InfluxDB 2 the retention is a property of the bucket, for example
+`influx bucket update --id <bucket-id> --retention 90d`, or in the UI under Load Data -> Buckets. Entry logs
+are personal data; keep them only as long as you need them.
 
-**Entries not sorted by time:**
-- Add **Sort by** transformation with `timestamp` field
-- Enable "Reverse" for descending order (newest first)
+## Controlling doors from outside openHAB
 
-**String items not persisting to InfluxDB:**
-- This is a known limitation of OpenHAB's InfluxDB binding
-- Use the JSON `EntryLog` items directly (works perfectly)
-- Avoid creating separate String items for firstName, lastName, etc.
+Any program can send a command to an item with `POST /rest/items/{itemName}` and the command as a plain-text
+body:
 
-### Advanced: Time Range Variables
+```python
+#!/usr/bin/env python3
+import requests
 
-Add a time range variable to your dashboard for flexible date filtering:
+OPENHAB = "http://localhost:8080"
+TOKEN = ""   # an openHAB API token, if your openHAB requires authentication
 
-1. Dashboard settings → Variables → Add variable
-2. Type: **Custom**
-3. Name: `timeRange`
-4. Values: `-1h,-6h,-12h,-24h,-7d,-30d`
-5. Display name: `Time Range`
 
-Update query to use variable:
-```flux
-union(tables: [
-  from(bucket: "openhab_db/autogen")
-    |> range(start: $timeRange)
-    |> filter(fn: (r) => r._measurement == "Net2_Door1_EntryLog"),
-  // ... other doors
-])
+def send(item: str, command: str) -> bool:
+    headers = {"Content-Type": "text/plain"}
+    if TOKEN:
+        headers["Authorization"] = f"Bearer {TOKEN}"
+    r = requests.post(f"{OPENHAB}/rest/items/{item}", data=command, headers=headers, timeout=10)
+    return r.ok
+
+
+if __name__ == "__main__":
+    send("Front_Door_Timed", "5")      # open the front door for 5 seconds
 ```
 
-### Advanced: Door Filter Variable
-
-Add a door filter dropdown:
-
-1. Dashboard settings → Variables → Add variable
-2. Type: **Custom**
-3. Name: `door`
-4. Values: `All,Door1,Door2,Door3,Door4,Door5`
-5. Multi-value: **ON**
-6. Include All: **ON**
-
-Update filter in query:
-```flux
-|> filter(fn: (r) => 
-  r._measurement =~ /Net2_${door}_EntryLog/
-)
-```
-
-### Performance Considerations
-
-**For high-traffic installations:**
-- Limit query range to recent data: `range(start: -7d)` instead of `-30d`
-- Use Grafana's auto-refresh sparingly (30s or 1m minimum)
-- Consider archiving old data (InfluxDB retention policies)
-
-**InfluxDB retention policy example:**
-```sql
-CREATE RETENTION POLICY "90_days" ON "openhab_db" DURATION 90d REPLICATION 1 DEFAULT
-```
-
-This automatically removes entry logs older than 90 days.
-
-### Integration with Alerts
-
-**Grafana Alert example - Unauthorized door access:**
-
-1. Create separate query for unauthorized users
-2. Use transformation to filter by specific names
-3. Set alert condition: "when count above 0"
-4. Configure notification channel (email, Slack, etc.)
-
-This setup provides complete visibility into door access patterns with minimal OpenHAB configuration.
-
+A success answer means openHAB accepted the command, not that Net2 carried it out; watch the item state (or
+`openhab.log`) for that.

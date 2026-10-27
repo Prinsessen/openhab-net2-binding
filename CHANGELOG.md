@@ -2,286 +2,188 @@
 
 All notable changes to the Paxton Net2 Binding are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versions follow the openHAB
+release the binding is built for (5.2.x for openHAB 5.2).
+
+## [5.2.2] - 2026-10-27
+
+### Added
+- **ACU lockout detection.** New door channel `lockout` (Switch, read-only): ON after `lockoutThreshold`
+  refusals of known users within `lockoutWindow` minutes with no entry between; OFF at the next entry. The
+  refusal types are 16, 17, 24, 25, 27 and 112. A refusal never counts while a lockdown switched on through the
+  bridge's `lockdown` channel is active, nor when Net2 names the event a lockdown refusal (112 "Access Denied -
+  Lockdown in Progress"). The state lives in memory: NULL until the first lockout, not restored after a restart.
+- **Re-Instate.** New door channel `reinstate` (Switch): ON sends Net2's Re-Instate
+  (`POST /api/v1/commands/door/reinstate` with `{"DoorId": ...}`) to the ACU of the door and falls back to OFF.
+  A manual Re-Instate does not clear `lockout`. New door channel `lastReinstate` (DateTime, read-only): set when
+  Net2 accepted a Re-Instate (HTTP 200).
+- **New bridge parameters** `autoReinstate` (default `false`), `lockoutThreshold` (3), `lockoutWindow`
+  (10 min) and `reinstateInterval` (30 min between automatic re-instates of one door while a lockout lasts).
+  With `autoReinstate` on, the first detection re-instates at once.
+- **New door channel `accessEvent`** (String, read-only): every LiveEvent that names a user, granted or
+  refused, as JSON `{firstName, lastName, doorName, timestamp, doorId, eventType, eventSubType
+  [, eventDescription][, eventSubTypeDescription]}`, without the token number.
+- **Event names.** At start the bridge asks Net2 for `GET /api/v1/events/eventTypes` and `/eventSubTypes`.
+  A Net2 v7.01 server answers HTTP 500; the bridge then learns the names from the last week of events
+  (`eventDescription`) and logs the table. The names go into the `accessEvent` and `entryLog` JSON.
+- **First JUnit tests:** `Net2DoorHandlerEventTest`, `Net2LockoutGuardTest`, `Net2EventTypesTest`,
+  `Net2UserListTest`.
+- `LICENSE` file with the EPL-2.0 text.
+
+- `lockout` is posted by the binding when a door comes online and on every poll, so a state restored by
+  persistence never sticks.
+
+### Changed
+- **`entryLog` carries granted access only**: event types 20 and 26, or an event with no `eventType` (older
+  servers). Before 5.2.2 every LiveEvent with a `userName` was posted as an entry, refusals included. The JSON
+  gains `eventType`, `eventSubType` and, when known, `eventDescription` and `eventSubTypeDescription`.
+- **`listUsers`** (send ON) now puts the users JSON on its channel, with every field whose name contains "pin"
+  removed at any depth. Before, the list went only to `openhab.log`.
+- The activity report counts 16, 17 and 112 as denied (before, they were left out).
+- `thing-types.xml`: defaults declared for `port` (8443), `tlsVerification` (true, SignalR only) and
+  `refreshInterval` (30 s); the password is a password field; the door `name` parameter is marked unused;
+  `status`, `lastAccessUser` and `accessDenied` are described as they behave.
+
+### Fixed
+- The bridge ignores REFRESH. Before, if an item was linked to `listUsers`, the list ran at every openHAB start
+  (openHAB sends REFRESH to linked channels) and wrote every user with their PIN to `openhab.log`.
+- Upgrade note: door things created in the UI may not show the new channels; if they are missing, delete the
+  door thing and add it again from the Inbox. Things in `.things` files get them when the file is loaded.
+
+### Security
+- No PINs in `openhab.log`: the user list is no longer logged, and `createUser` logs only whether a PIN is set.
+- Token numbers are no longer logged at INFO: the raw SignalR message (`Net2SignalRClient`) and the event
+  payload in the door handler are logged at DEBUG.
+- Known: in ASP.NET Core SignalR mode the access token is part of the WebSocket URI, which is logged at DEBUG.
+- Users of earlier versions: old `openhab.log` files and backups may contain every user's PIN.
+
+### Corrections to earlier entries and documentation
+- **Polling interval:** the default `refreshInterval` is 30 seconds. Entries and documents that said
+  "every 10 minutes" or "default 600" were wrong; 600 is used only when the value is 0 or less.
+- **"Door state via eventType 47" (and 20/28/46):** the LiveEvents branch that mapped these types to the door
+  state never runs. The live door state comes only from `DoorStatusEvents` (`doorRelayOpen`, `status` channel)
+  and the REST poll (`status` and `action`).
+- **"Fire-and-forget lockdown":** the lockdown command waits for Net2's HTTP answer, and the channel state is
+  updated only when Net2 accepted it.
+- **TLS verification:** `tlsVerification` affects only the SignalR connection. REST calls always verify the
+  certificate against the Java trust store.
+- **"Credentials never persisted to disk":** the password is stored in openHAB's thing configuration like any
+  other parameter; only the access and refresh tokens are kept in memory only.
+- **SignalR protocol:** the binding tries ASP.NET Core SignalR (`/eventHubLocal`) first and falls back to
+  classic SignalR (`/signalr`); it is not "SignalR 2 Classic only".
+- **`lastAccessUser` / `lastAccessTime`:** they change on every event that names a user or carries a time,
+  refusals included, not only on access.
+- **Door `name` parameter:** never used; events name the door by the thing label.
+- **v5.2.1 release asset:** the JAR attached to the v5.2.1 GitHub release was built after the v5.2.1 tag and
+  also contains the two fixes listed under 5.2.1 as "connection verification" and "forced re-authentication"
+  (commit b92e0a2). The tag itself has only the auto-reconnect fix.
 
 ## [5.2.1] - 2026-04-20
 
 ### Fixed
-- **SignalR auto-reconnect after Net2 server restart or network outage** — Previously, if the Net2 server was restarted or a network disruption occurred, the SignalR WebSocket connection would die silently (`onClose`/`onError` set `connected=false`) but nothing triggered a reconnection. API polling continued to work, but real-time door events via SignalR were lost until a full binding restart. The fix adds:
-  - `onDisconnectedCallback` in `Net2SignalRClient` — fires on WebSocket close/error (only on connected→disconnected transition to avoid duplicates)
-  - `onSignalRDisconnected()` in `Net2ServerHandler` — schedules automatic reconnection with exponential backoff (30s → 60s → 120s → 240s → 300s cap)
-  - Old SignalR client cleanup before creating new connection
-  - Backoff counter reset on successful reconnect
-  - Safety-net in `refreshDoorStatus()` — if the periodic API poll finds SignalR dead with no reconnect job scheduled, it triggers one immediately
-  - All door subscriptions are re-established after successful reconnect via existing `onSignalRConnected` callback
-- **SignalR reconnect falsely reported success on failed connection** — `startSignalR()` logged "connected and subscribed successfully" and reset backoff even when `connect()` failed (e.g. 502 during Net2 startup). Now checks `isConnected()` after `connect()` and schedules retry if not actually connected.
-- **Token invalidation after Net2 server restart** — After a Net2 restart, the old OAuth token becomes invalid but the binding still considered it valid (not yet expired by time). Reconnect attempts failed with 401. Now forces re-authentication before each SignalR reconnect attempt to ensure a fresh token.
+- **SignalR auto-reconnect after Net2 server restart or network outage.** If the Net2 server restarted or the
+  network dropped, the SignalR WebSocket died silently and nothing reconnected; the REST poll kept working but
+  live events were lost until the binding was restarted. The fix adds:
+  - `onDisconnectedCallback` in `Net2SignalRClient`, fired on WebSocket close/error (only on the
+    connected-to-disconnected transition, to avoid duplicates)
+  - `onSignalRDisconnected()` in `Net2ServerHandler`, which schedules a reconnect with a growing delay
+    (30 s, 60 s, 120 s, 240 s, then 300 s)
+  - cleanup of the old SignalR client before a new connection, and a backoff reset after a successful one
+  - a safety net in `refreshDoorStatus()`: if a poll finds SignalR down with no reconnect scheduled, it starts one
+  - all door subscriptions are re-established after a reconnect
+- **Connection verification** (in the release asset, after the tag; see Corrections under 5.2.2):
+  `startSignalR()` logged "connected and subscribed successfully" and reset the backoff even when `connect()`
+  failed (for example HTTP 502 while Net2 starts). It now checks `isConnected()` and schedules a retry.
+- **Forced re-authentication on reconnect** (in the release asset, after the tag): after a Net2 restart the old
+  OAuth token was invalid but not yet expired by time, so reconnects failed with 401. The binding now logs in
+  again before each SignalR reconnect attempt.
 
 ## [5.2.0] - 2026-03-07
 
-### Added
-- **Activity Report** (`activityReport` channel)
-  - New bridge channel that generates an HTML activity report on each refresh cycle
-  - Fetches last 24 hours of access events from Net2 `/events` API endpoint
-  - Groups events by door with color-coded results (granted/denied/unknown)
-  - Summary stats bar showing total events, access granted, access denied, unique users
-  - Mobile-friendly responsive HTML output at `/static/net2_activity.html`
-  - Auto-refreshes on each polling interval (default: every 10 minutes)
-  - Channel state shows last report update timestamp (dd.MM.yyyy HH:mm:ss)
-  - Replaces external `net2_user_activity_daemon.py` — no separate Python service needed
-  - Embeddable in sitemaps via `Webview url="/static/net2_activity.html"`
-  - New `Net2ActivityReportGenerator` class (~320 lines) and `getEvents()` API method
+5.2.0 collects the development from 2026-01-09 to 2026-03-07; the dates below are when each part was added.
 
-### Fixed
-- **CRITICAL: Garage door toggling on startup** — During OpenHAB startup, the framework sends `REFRESH` commands to all linked channels. The `controlTimed` channel handler (`handleDoorControlTimed()`) did not filter `RefreshType`, so the `"REFRESH"` string fell through to the numeric parser, threw `NumberFormatException`, and defaulted to a **1-second TimedOpen**. For doors with momentary relays (e.g. garage port), this pulsed the relay and **toggled the physical door on every restart**. Fix: added `RefreshType` guard at the top of `handleCommand()` to silently ignore `REFRESH` before any channel dispatch. Discovered from log evidence:
-  ```
-  2026-03-04 14:52:25.248 Sending advanced door control payload:
-    {"DoorId":7242929,"RelayFunction":{"RelayId":"Relay1","RelayAction":"TimedOpen","RelayOpenTime":1000},"LedFlash":3}
-  ```
-- **DoorHandler logging** - Changed TEST LOG message from `logger.error` to `logger.debug` in `Net2DoorHandler.handleDoorControlTimed()` to prevent ERROR-level log pollution on every timed door command
+### Added
+- **Activity report** (`activityReport` bridge channel, 2026-03-07)
+  - Generates an HTML report on each poll from the last 24 hours of events (`GET /api/v1/events`)
+  - Groups events by door with colour-coded results (granted/denied/other) and a summary (total, granted,
+    denied, unique users)
+  - Written to `/etc/openhab/html/net2_activity.html`, served at `/static/net2_activity.html`
+  - Channel state: time of the last report (`dd.MM.yyyy HH:mm:ss`)
+  - New `Net2ActivityReportGenerator` class and `getEvents()` API method; replaces an earlier external Python
+    service
+- **Building lockdown** (`lockdown` bridge channel, 2026-02-06)
+  - Switch: ON switches the Net2 lockdown on, OFF switches it off, via `POST /api/v1/commands/controlLockdown`
+  - Which doors lock is configured in the Net2 software
+- **Access denied detection** (`accessDenied` door channel, 2026-01-16)
+  - Event type 23 (a token Net2 does not know) from SignalR LiveEvents
+  - JSON: `{"tokenNumber":"7654321","doorName":"Front Door","timestamp":"2026-01-16T17:26:50","doorId":1234567}`
+- **Entry logging** (`entryLog` door channel, 2026-01-10)
+  - JSON: `{"firstName":"John","lastName":"Doe","doorName":"Front Door","timestamp":"2026-01-10T18:48:34","doorId":1234567}`
+  - Posted for LiveEvents that name a user (in 5.2.0 this included refusals; see 5.2.2)
+- **User query** (`listUsers` bridge channel, 2026-01-10)
+  - `GET /api/v1/users`; in 5.2.0 the full answer, PINs included, was logged to `openhab.log` (see 5.2.2)
+- **Hybrid synchronization** (2026-01-09)
+  - SignalR subscriptions per door; REST poll as fallback (default every 30 s)
+  - `action` and `status` follow the Net2 state from the poll, whatever controlled the door
+  - Connection callback so door handlers subscribe once SignalR is ready (fixes a race in the client start-up)
+  - Debug logging for polls (`refreshDoorStatus`, `updateFromApiResponse`) and subscriptions
 
 ### Changed
-- Updated JAR to latest build
+- `binding.xml` migrated to `OH-INF/addon/addon.xml` (openHAB 5)
+- `status` mirrors the relay state reported by Net2 (`status.doorRelayOpen` in the API answer)
+- The 5-second auto-off timer on the door channels was removed; the door closing is seen in `DoorStatusEvents`
+  and the REST poll (the original entry credited eventType 47 for this; see Corrections under 5.2.2)
 
-## [5.2.0] - 2026-02-06
-
-### Added
-- **Building Lockdown Control** (`lockdown` channel)
-  - New bridge channel for emergency lockdown control
-  - Switch channel (ON=enable lockdown, OFF=disable lockdown)
-  - Triggers Net2 lockdown trigger/action rules via API endpoint `/commands/controlLockdown`
-  - Fire-and-forget command execution for immediate response
-  - Requires pre-configured lockdown triggers and actions in Net2 software
-  - Enables emergency lockdown from OpenHAB rules, UI, or external systems
-  - Use cases: Fire alarms, security alerts, after-hours automation
-  - Example integrations: Scheduled lockdowns, security system integration, manual control
-  - Python reference implementation available in scripts/
-
-## [5.2.0] - 2026-01-16
-
-### Added
-- **Access Denied Detection** (`accessDenied` channel)
-  - New door channel for detecting unauthorized access attempts
-  - Captures eventType 23 (Access Denied) from Net2 SignalR LiveEvents
-  - Returns JSON-formatted denied access data: tokenNumber, doorName, timestamp, doorId
-  - Enables security alerts via rules (email/SMS notifications)
-  - Real-time detection of invalid cards/tokens presented to readers
-  - Format example: `{"tokenNumber":"1234567","doorName":"Front Door","timestamp":"2026-01-16T17:26:50","doorId":6612642}`
-  - Integration examples provided for email/SMS alerting
-  - Timestamp comparison logic for multi-door deployments
-
-## [5.2.0] - 2026-01-10
-
-### Added
-- **Entry Logging Channel** (`entryLog`)
-  - New door channel for tracking physical badge access events
-  - Returns JSON-formatted entry data: firstName, lastName, doorName, timestamp, doorId
-  - Only logs physical badge access (not remote UI commands)
-  - Integrates with InfluxDB/Grafana for access analytics
-  - Includes JavaScript transform for user-friendly UI display
-  - Format example: `{"firstName":"Nanna","lastName":"Agesen","doorName":"Front Door","timestamp":"2026-01-10T18:48:34","doorId":6612642}`
-- **User Query Channel** (`listUsers`)
-  - New bridge channel to query all users in the Net2 system
-  - Returns full JSON payload via `GET /api/v1/users`
-  - Logs complete user details to openhab.log
-  - Usage: Send any command (ON/REFRESH) to trigger
-  - Output includes: Id, FirstName, LastName, PIN, Telephone, AccessLevel, ExpiryDate, etc.
-  - Useful for auditing, reporting, and user management automation
+### Fixed
+- **Garage door toggling on startup (critical).** At start openHAB sends REFRESH to linked channels. The
+  `controlTimed` handler did not filter it: "REFRESH" failed to parse as a number and fell back to a 1-second
+  TimedOpen, which pulsed the relay of a momentary-relay door (garage door) on every openHAB start. REFRESH is
+  now ignored at the top of `handleCommand()` before any channel is handled. The log showed:
+  ```
+  Sending advanced door control payload:
+    {"DoorId":1234567,"RelayFunction":{"RelayId":"Relay1","RelayAction":"TimedOpen","RelayOpenTime":1000},"LedFlash":3}
+  ```
+- A test log line in `handleDoorControlTimed()` was logged at ERROR; now DEBUG
+- Door state not synchronizing when the door was closed physically or from the Net2 software
+- Wrong field parsed from the API answer (`state` instead of `status.doorRelayOpen`)
+- `action` channel not updated by the poll
+- False door status OFF after 5 seconds while the door was still open (timer removed)
 
 ### Documentation
-- **Entry Log Dashboard Guide** (2026-01-11)
-  - Added comprehensive step-by-step guide in EXAMPLES.md
-  - Complete InfluxDB persistence configuration
-  - Working Flux queries for single and combined door dashboards
-  - All Grafana transformation steps with exact settings
-  - Troubleshooting section for common issues
-  - Advanced features: time range variables, door filters, performance tips
-- **Updated ENTRY_LOGGING.md**
-  - Added reference to comprehensive dashboard guide
-  - Simplified Grafana section with working examples
-  - Removed outdated JSON parsing approaches
-- **Updated README.md**
-  - Added "Additional Documentation" section
-  - Cross-references to all documentation files
-  - Direct link to Entry Log Dashboard guide
-
-### Previous Release - 2026-01-09
-
-### Added
-- **Hybrid Synchronization System**
-  - SignalR real-time event subscription for each door
-  - Door-specific LiveEvents subscriptions for instant notifications
-  - API polling fallback for guaranteed state accuracy (every 30s by default)
-  - Both `action` and `status` channels now sync with Net2 server state
-  - Synchronization works regardless of control method (OpenHAB, Net2 UI, physical access)
-- **Enhanced Event Handling**
-  - EventType-based state tracking (20, 28, 46 for door open; 47 for door close)
-  - Proper handling of `doorRelayOpen` field from API status endpoint
-  - Door state updates from both SignalR events and API polling
-- **Improved SignalR Integration**
-  - Connection callback mechanism to notify door handlers when SignalR ready
-  - Automatic door-specific subscriptions after SignalR connection established
-  - Fixed race condition in SignalR client initialization
-  - Subscriptions logged for debugging: "Subscribed to door events for door ID"
-- **Debug Logging**
-  - Comprehensive logging for synchronization events
-  - `refreshDoorStatus` logs show API polling activity
-  - `updateFromApiResponse` logs show door state updates from API
-  - SignalR event logs show real-time door events with eventType
-
-### Changed
-- `action` channel now maintains persistent state until door physically closes (via API polling detection)
-- `status` channel now mirrors actual door relay state from Net2 server
-- Both channels update from API polling to ensure accurate synchronization
-- Door handlers notified via callback when SignalR connection ready (not during connect)
-- **Removed 5-second auto-off timer** - SignalR now reliably handles door close detection via eventType 47
-
-### Fixed
-- Door state not synchronizing when closed physically or via Net2 UI
-- SignalR client race condition where callback fired before client was assigned
-- Incorrect API field parsing (`state` → `status.doorRelayOpen`)
-- EventType 47 (door closed) unreliability addressed by API polling fallback
-- Missing state updates for `action` channel during API refresh
-- False door status OFF after 5 seconds while door remained open (timer removed)
-
-### Technical Details
-- API response structure: `{"id": doorId, "status": {"doorRelayOpen": boolean}}`
-- SignalR Classic mode protocol with LiveEvents hub
-- Net2 API does not implement documented `doorEvents` or `doorStatusEvents` hubs
-- SignalR reliably handles both door opens (EventType 20/28/46) and closes (EventType 47)
-- Default refresh interval: 30 seconds (configurable) provides redundant verification
-- **Door state tracked by SignalR events** (instant) with API polling backup
+- Entry log dashboard guide (InfluxDB and Grafana) in EXAMPLES.md (2026-01-11)
 
 ## [5.1.0] - 2026-01-07
 
 ### Added
 - Initial release for openHAB 5.1
-- Timed door control channel (`controlTimed`) for advanced server-side timed open
-- **Bridge Channels (User Management)**
-  - `createUser` channel: Create users with access level assignment
-  - `deleteUser` channel: Remove users by ID
-  - `listAccessLevels` channel: Enumerate available access levels
-- **Door Control**
-  - `status` channel: Monitor door lock/unlock status
-  - `action` channel: Control door (hold open/close)
-  - `lastAccessUser` channel: Track last user who accessed door
-  - `lastAccessTime` channel: Timestamp of last access
-- **Authentication & Security**
-  - OAuth2 JWT token handling with automatic refresh
-  - Configurable TLS certificate verification
-  - Secure credential storage in openHAB
-- **Real-time Updates**
-  - SignalR 2 event support for live door status
-  - Configurable polling interval (default 30s)
-  - Automatic door discovery
-- **API Integration**
-  - Full support for Net2 Local API v1
-  - User management (create, delete)
-  - Access level assignment to doors
-  - Door permission set management
-- **Documentation**
-  - Comprehensive README with examples
-  - EXAMPLES.md with detailed usage for timed and default door control
-  - Contributing guidelines
-  - Troubleshooting section
-  - Configuration examples for text and UI
-## Author
-
-**Nanna Agesen** (@Prinsessen)
-- Email: nanna@agesen.dk
-- GitHub: https://github.com/Prinsessen
+- Door channels `status`, `action`, `controlTimed` (timed open on the Net2 side), `lastAccessUser`,
+  `lastAccessTime`
+- Bridge channels `createUser` (with access level assignment), `deleteUser`, `listAccessLevels`
+- OAuth2 token handling with automatic refresh (5 minutes before expiry)
+- `tlsVerification` parameter (it applies to the SignalR connection only; see Corrections under 5.2.2)
+- SignalR live events and a configurable polling interval (default 30 s)
+- Door discovery
+- Net2 Local API v1: user management, access level assignment, door permission sets
+- README, EXAMPLES.md, contributing guidelines
 
 ### Fixed
-- Token refresh handling to prevent authentication timeouts
-- Proper resource cleanup on binding shutdown
+- Token refresh to prevent authentication timeouts
+- Resource cleanup on binding shutdown
 - Concurrent access token management
 
 ### Changed
 - Bridge configuration requires explicit API credentials
-- Improved error logging for API failures
-- Enhanced SignalR connection resilience
-
-### Security
-- Token expiry checking with 5-minute buffer
-- TLS verification enabled by default
-- Credentials never persisted to disk
-- Secure memory handling for tokens
-
-## [Unreleased]
-
-### Planned Features
-- Event-driven door status updates without polling
-- Integration with openHAB's native permissions system
-- Mobile app support
-- SMS/email notifications for access events
-- Advanced scheduling for temporary access
-
-### Under Investigation
-- Integration with Home Assistant
-- Support for additional access control systems
-- Native openHAB UI dashboard templates
+- Error logging for API failures
+- SignalR connection resilience
 
 ---
-
-## Versioning
-
-This binding follows semantic versioning:
-- **MAJOR** (5.x.0): Compatibility with openHAB major versions
-- **MINOR** (5.1.x): New features, backward compatible
-- **PATCH** (5.1.0): Bug fixes, backward compatible
-
-## Release Support
-
-| Version | openHAB | Java | Status | Support Until |
-|---------|---------|------|--------|----------------|
-| 5.1.0   | 5.1+    | 21+  | Active | 2027-01-07   |
-
-## Contributors
-
-- **Nanna Agesen** (@Prinsessen) - Lead Developer, Maintainer
-  - Email: nanna@agesen.dk
-  - GitHub: https://github.com/Prinsessen
 
 ## License
 
-All changes are licensed under the Eclipse Public License 2.0 (EPL-2.0).
+All changes are licensed under the Eclipse Public License 2.0 (EPL-2.0), see [LICENSE](LICENSE).
 
-## Notes
+## Contributing and support
 
-### Breaking Changes
-None in current version.
-
-### Migration Guide
-First-time users: See README.md for complete setup instructions.
-
-### Known Limitations
-- SignalR events may be delayed on high-latency networks
-- User creation requires valid access level in Net2 system
-- Maximum 100 doors per Net2 instance (API limitation)
-
-### Compatibility Matrix
-
-| Feature | Net2 Version | openHAB Version |
-|---------|--------------|-----------------|
-| Basic Door Control | 6.6 SR5+ | 5.0+ |
-| User Management | 6.6 SR5+ | 5.0+ |
-| SignalR Events | 6.6 SR5+ | 5.0+ |
-| Auto-Discovery | 6.6 SR5+ | 5.0+ |
-
----
-
-## How to Contribute
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-- Reporting bugs
-- Requesting features
-- Submitting code changes
-- Code style requirements
-- Testing procedures
-
-## Contact & Support
-
-- **Issues**: https://github.com/Prinsessen/openhab-net2-binding/issues
-- **Email**: nanna@agesen.dk
-- **Community**: https://community.openhab.org/
+- See [CONTRIBUTING.md](CONTRIBUTING.md)
+- Issues: https://github.com/Prinsessen/openhab-net2-binding/issues
+- Maintainer: Nanna Agesen (GitHub: Prinsessen)

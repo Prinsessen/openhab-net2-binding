@@ -1,363 +1,183 @@
-# Net2 Binding - Build & Development Guide
+# Net2 Binding - Build and Development Guide
 
 ## Prerequisites
 
-- **Java Development Kit (JDK) 21** - [Download](https://adoptium.net/temurin/)
-- **Apache Maven 3.6+** - [Download](https://maven.apache.org/download.cgi)
-- **Git** - For cloning the OpenHAB repository
+- JDK 21 ([Temurin](https://adoptium.net/temurin/) or the distribution's OpenJDK 21)
+- Apache Maven 3.9 or the `mvnw` wrapper of the openhab-addons checkout
+- Git
+- An openhab-addons checkout for openHAB 5.2 (see below)
 
-### Installation
+## Why the binding needs the add-ons reactor
 
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install openjdk-21-jdk maven git
+`pom.xml` has only a parent and an artifact ID:
+
+```xml
+<parent>
+  <groupId>org.openhab.addons.bundles</groupId>
+  <artifactId>org.openhab.addons.reactor.bundles</artifactId>
+  <version>5.2.0-SNAPSHOT</version>
+</parent>
+<artifactId>org.openhab.binding.net2</artifactId>
 ```
 
-**macOS (Homebrew):**
+All dependencies, plugins and checks come from the openhab-addons reactor. A `mvn clean install` in this
+repository on its own fails, because that parent cannot be resolved. Build inside `bundles/` of an
+openhab-addons checkout.
+
+## Building
+
 ```bash
-brew install openjdk@21 maven git
+git clone https://github.com/openhab/openhab-addons.git
+cd openhab-addons
+# check out a 5.2 version (a 5.2.x branch or tag) for a JAR that runs on openHAB 5.2
+git clone https://github.com/Prinsessen/openhab-net2-binding.git bundles/org.openhab.binding.net2
 ```
 
-**Verify installation:**
+Then:
+
+1. If the reactor's version (`<version>` in `openhab-addons/pom.xml`) is not `5.2.0-SNAPSHOT`, set
+   `<parent><version>` in `bundles/org.openhab.binding.net2/pom.xml` to it. Do not commit that change.
+2. Add `<module>org.openhab.binding.net2</module>` to the `<modules>` list in `bundles/pom.xml`.
+3. Build from the checkout's root:
+
 ```bash
-java --version
-mvn --version
+mvn -pl bundles/org.openhab.binding.net2 clean install                 # with tests and checks
+mvn -pl bundles/org.openhab.binding.net2 clean install -DskipChecks    # without the static analysis
+mvn -pl bundles/org.openhab.binding.net2 spotless:apply                # format the code the openHAB way
 ```
+
+The JAR is `bundles/org.openhab.binding.net2/target/org.openhab.binding.net2-<reactor version>.jar`.
+
+A practical layout is to keep the git clone somewhere else and copy `src/` and `pom.xml` into
+`bundles/org.openhab.binding.net2/` before each build, so the add-ons folder is a build directory only.
+
+## Tests
+
+JUnit 5 tests in `src/test/java/org/openhab/binding/net2/handler/`:
+
+| Test | What it holds |
+|------|---------------|
+| `Net2DoorHandlerEventTest` | which events are entries (20, 26, no type) and which are not (refusals, the PIN step 16/17 sub type 82); the event JSON carries the type and names and no token number |
+| `Net2LockoutGuardTest` | the lockout guard: threshold, window, an entry between refusals, re-instate interval, automatic re-instate on and off, the PIN step cleared by the PIN, no lockout during a lockdown or for events Net2 names a lockdown refusal |
+| `Net2EventTypesTest` | reading Net2's event type lists in the shapes the API may answer, and learning names from the events themselves |
+| `Net2UserListTest` | every PIN field removed from the user list, at any depth; non-JSON gives an empty list |
+
+```bash
+mvn -pl bundles/org.openhab.binding.net2 test
+mvn -pl bundles/org.openhab.binding.net2 test -Dtest=Net2LockoutGuardTest
+```
+
+The tests cover the pure logic. Behaviour against a real Net2 server (SignalR, Re-Instate, lockdown) has to be
+checked on a server; read the binding's log lines after a change.
 
 ## Project Structure
 
 ```
-net2-binding/
-├── pom.xml                          # Maven configuration
-├── README.md                        # Binding documentation
-├── EXAMPLES.md                      # Usage examples
-├── DEVELOPMENT.md                   # This file
-├── src/
-│   ├── main/
-│   │   ├── java/org/openhab/binding/net2/
-│   │   │   ├── Net2BindingConstants.java
-│   │   │   ├── discovery/
-│   │   │   │   └── Net2DoorDiscoveryService.java
-│   │   │   ├── handler/
-│   │   │   │   ├── Net2HandlerFactory.java
-│   │   │   │   ├── Net2ServerHandler.java
-│   │   │   │   ├── Net2ServerConfiguration.java
-│   │   │   │   ├── Net2DoorHandler.java
-│   │   │   │   ├── Net2DoorConfiguration.java
-│   │   │   │   ├── Net2ApiClient.java
-│   │   │   │   └── Net2SignalRClient.java
-│   │   │   └── internal/
-│   │   │       └── Net2Utils.java
-│   │   └── resources/
-│   │       ├── OH-INF/thing/
-│   │       │   └── thing-types.xml
-│   │       ├── OSGI-INF/
-│   │       │   ├── org.openhab.binding.net2.handler.Net2HandlerFactory.xml
-│   │       │   └── org.openhab.binding.net2.discovery.Net2DoorDiscoveryService.xml
-│   │       └── feature.xml
-│   └── test/
-│       └── java/org/openhab/binding/net2/
-│           └── handler/
-│               └── Net2DoorHandlerTest.java
-└── target/                          # Build output
-    └── org.openhab.binding.net2-5.1.0.jar
+openhab-net2-binding/
+├── pom.xml
+├── LICENSE
+├── README.md, QUICKSTART.md, EXAMPLES.md, ENTRY_LOGGING.md,
+│   DEVELOPMENT.md, CONTRIBUTING.md, CHANGELOG.md, MARKETPLACE_POST.md
+└── src/
+    ├── main/
+    │   ├── feature/feature.xml
+    │   ├── history/dependencies.xml
+    │   ├── java/org/openhab/binding/net2/
+    │   │   ├── Net2BindingConstants.java
+    │   │   ├── discovery/
+    │   │   │   └── Net2DoorDiscoveryService.java      door discovery from GET /doors
+    │   │   └── handler/
+    │   │       ├── Net2HandlerFactory.java
+    │   │       ├── Net2ServerHandler.java             bridge: login, poll, SignalR, user channels, lockdown, event names
+    │   │       ├── Net2ServerConfiguration.java
+    │   │       ├── Net2DoorHandler.java               door: commands, events, entry filter, lockout guard use
+    │   │       ├── Net2DoorConfiguration.java
+    │   │       ├── Net2ApiClient.java                 REST calls and token handling
+    │   │       ├── Net2SignalRClient.java             ASP.NET Core / classic SignalR client
+    │   │       ├── Net2LockoutGuard.java              ACU lockout detection (one per door)
+    │   │       ├── Net2EventTypes.java                Net2's event type names
+    │   │       └── Net2ActivityReportGenerator.java   HTML activity report
+    │   └── resources/
+    │       ├── feature.xml
+    │       ├── OH-INF/addon/addon.xml
+    │       ├── OH-INF/thing/thing-types.xml
+    │       └── OSGI-INF/org.openhab.binding.net2.handler.Net2HandlerFactory.xml
+    └── test/java/org/openhab/binding/net2/handler/
+        ├── Net2DoorHandlerEventTest.java
+        ├── Net2EventTypesTest.java
+        ├── Net2LockoutGuardTest.java
+        └── Net2UserListTest.java
 ```
 
-## Building the Binding
+## Deploying a test build
 
-### Full Build
+Copy the JAR into the addons folder of a test openHAB (`/usr/share/openhab/addons/` on apt installs,
+`$OPENHAB_HOME/addons/` otherwise) after removing the previous Net2 JAR. openHAB installs it without a restart.
+Check with `bundle:list | grep -i net2` in the Karaf console.
 
-```bash
-cd /etc/openhab/net2-binding
+## Logging
 
-# Clean and build
-mvn clean install
+openHAB logs through log4j2. For a session, in the Karaf console (`openhab-cli console`):
 
-# Output
-# [INFO] BUILD SUCCESS
-# [INFO] Total time: XX.XXX s
-# [INFO] Finished at: 2026-01-06T...
+```
+log:set DEBUG org.openhab.binding.net2
+log:tail org.openhab.binding.net2
+log:set DEFAULT org.openhab.binding.net2
 ```
 
-### Build with Tests
+To make it permanent, add a logger for `org.openhab.binding.net2` to `log4j2.xml` in the userdata `etc` folder
+(`/var/lib/openhab/etc/log4j2.xml` on apt installs). DEBUG output contains token numbers and, in ASP.NET Core
+SignalR mode, the access token in the WebSocket URI; see README, "Privacy and logging". Do not paste it
+unedited into an issue.
 
-```bash
-mvn clean install
-# Tests run automatically
-```
+## Debugging
 
-### Skip Tests
+`start_debug.sh` in the openHAB runtime folder (`/usr/share/openhab/` on apt installs) starts openHAB with a
+Java debug port (5005). Attach your IDE as a remote JVM debugger.
 
-```bash
-mvn clean install -DskipTests
-```
+## Common Tasks
 
-### Build Specific Module
+### Adding a channel
 
-```bash
-mvn clean install -pl :org.openhab.binding.net2
-```
+1. `thing-types.xml`: add `<channel id="..." typeId="..."/>` to the thing or bridge, and a `<channel-type>`.
+2. `Net2BindingConstants.java`: add the channel ID constant.
+3. The handler: handle the command in `handleCommand()` (remember that REFRESH is ignored at the top) or update
+   the state with `updateState()`.
+4. Document it in README.md (channel table) and CHANGELOG.md.
 
-## Development Workflow
+Existing things defined in `.things` files pick up new channels when the thing is recreated; things created in
+the UI may need to be recreated to show them.
 
-### 1. Set Up IDE
+### Adding a configuration parameter
 
-#### Eclipse IDE
+1. `thing-types.xml`: add the parameter with its type and `<default>`.
+2. Add the field, with the same default, to `Net2ServerConfiguration` or `Net2DoorConfiguration`.
+3. Read it with `getConfigAs(...)`.
+4. Document it in the README parameter table.
 
-```bash
-# Generate Eclipse project files
-mvn eclipse:eclipse
+### Bridge user channels
 
-# In Eclipse: File → Import → Existing Projects into Workspace
-# Select net2-binding directory
-```
+- `createUser` parses `firstName,lastName,accessLevel,pin`, resolves the access level with
+  `Net2ApiClient.resolveAccessLevelId()`, calls `addUser()` and then `assignAccessLevels()`.
+- `deleteUser` calls `deleteUser(id)`.
+- `listAccessLevels` calls `listAccessLevels()` and logs the result.
+- `listUsers` calls `listUsers()` and puts the result, without PIN fields (`Net2ServerHandler.withoutPins()`),
+  on the channel.
 
-#### VS Code
+## Releasing
 
-```bash
-# Install extensions:
-# - Extension Pack for Java
-# - Maven for Java
-# - Debugger for Java
+The version of a release lives in the git tag (`v5.2.2`), in CHANGELOG.md and in the name of the release asset.
+`pom.xml` keeps the reactor's parent version; the JAR built by the reactor is named after it.
 
-# Open folder
-code /etc/openhab/net2-binding
-```
+1. Update CHANGELOG.md and the documentation.
+2. Build and test in the reactor.
+3. Copy the JAR to `org.openhab.binding.net2-<version>.jar`.
+4. Tag (`git tag v<version>`), push the tag, create the GitHub release and attach the renamed JAR.
+5. Check that the attached asset is the one you built (compare a checksum), and update the download link in
+   MARKETPLACE_POST.md.
 
-#### IntelliJ IDEA
+## Resources
 
-```bash
-# IntelliJ will auto-detect Maven project
-# File → Open → Select net2-binding directory
-```
-
-### 2. Code Style & Quality
-
-```bash
-# Check code style (SpotBugs)
-mvn clean spotbugs:spotbugs
-
-# Format code (Spotless)
-mvn spotless:apply
-
-# Full static analysis
-mvn clean verify
-```
-
-### 3. Running Tests
-
-```bash
-# Run all tests
-mvn test
-
-# Run specific test
-mvn test -Dtest=Net2DoorHandlerTest
-
-# Run with coverage report
-mvn clean test jacoco:report
-# Report: target/site/jacoco/index.html
-```
-
-### 4. Debugging
-
-#### Remote Debug from Eclipse
-
-1. Start Maven with debug flag:
-```bash
-mvn -Xmx1024m -Xms1024m -agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=5005 install
-```
-
-2. In Eclipse: Debug → Debug Configurations
-3. Create "Remote Java Application"
-4. Set Host: localhost, Port: 5005
-
-#### Logger Configuration
-
-Add debug logging to `src/main/resources/logback.xml`:
-```xml
-<logger name="org.openhab.binding.net2" level="DEBUG"/>
-```
-
-## Common Development Tasks
-
-### Adding a New Channel
-
-1. Update `thing-types.xml`:
-```xml
-<channel id="newChannel" typeId="newChannelType"/>
-```
-
-2. Define channel type:
-```xml
-<channel-type id="newChannelType">
-    <item-type>String</item-type>
-    <label>New Channel</label>
-</channel-type>
-```
-
-3. Update handler:
-```java
-case "newChannel":
-    // Handle command
-    break;
-```
-
-### Bridge Channels (User Management)
-
-Implemented bridge-level channels in `thing-types.xml` and `Net2ServerHandler`:
-
-- `createUser` → parses `firstName,lastName,accessLevel,pin`, calls `Net2ApiClient.addUser()` then `assignAccessLevels()`
-- `deleteUser` → calls `Net2ApiClient.deleteUser(id)`
-- `listAccessLevels` → calls `Net2ApiClient.listAccessLevels()` and logs results
-
-API client helpers:
-- `addUser`, `deleteUser`
-- `listAccessLevels`, `resolveAccessLevelId`
-- `replaceUserDoorPermissionSet`, `assignAccessLevels`
-
-### Adding Configuration Parameter
-
-1. Update `thing-types.xml` config-description
-2. Create/update Configuration class
-3. Use in handler: `config = getConfigAs(ConfigClass.class)`
-
-### Adding a New Handler
-
-1. Create `MyNewHandler extends BaseThingHandler`
-2. Register in `Net2HandlerFactory`
-3. Register OSGi service in `OSGI-INF/` XML
-4. Add to `pom.xml` if needed
-
-## Testing Best Practices
-
-### Unit Tests
-
-```java
-@Test
-public void testSomething() {
-    // Arrange
-    MockitoAnnotations.openMocks(this);
-    
-    // Act
-    handler.someMethod();
-    
-    // Assert
-    verify(callback).somethingHappened();
-}
-```
-
-### Integration Tests
-
-Test with actual OpenHAB framework (more complex setup):
-```java
-@RunWith(OSGiRunner.class)
-public class Net2IntegrationTest { ... }
-```
-
-## Performance Optimization
-
-### API Client Improvements
-
-- Connection pooling for HTTP client
-- Request timeout configuration
-- Batch API calls where possible
-
-### Handler Optimization
-
-- Cache frequently accessed data
-- Use efficient JSON parsing
-- Avoid blocking operations in event handlers
-
-## Common Issues
-
-### Build Fails with "Cannot find symbol"
-
-```bash
-# Clear Maven cache
-rm -rf ~/.m2/repository/org/openhab
-
-# Rebuild with offline check
-mvn clean install -U
-```
-
-### Tests Timeout
-
-Increase timeout in `pom.xml`:
-```xml
-<maven.compiler.timeout>300</maven.compiler.timeout>
-```
-
-### Bundle Not Loading
-
-Check MANIFEST.MF:
-```bash
-jar tf target/org.openhab.binding.net2-*.jar | grep MANIFEST
-```
-
-Verify imports in OSGi XML are correct.
-
-## Debugging Checklist
-
-- [ ] Check OpenHAB logs: `tail -f /var/log/openhab/openhab.log`
-- [ ] Verify thing configuration
-- [ ] Check channel bindings
-- [ ] Confirm API credentials
-- [ ] Verify network connectivity
-- [ ] Check Java version (must be 21+)
-- [ ] Review handler status updates
-
-## Deployment
-
-### Local Testing
-
-```bash
-# Build
-mvn clean install
-
-# Copy to OpenHAB
-cp target/org.openhab.binding.net2-*.jar ~/openhab-dev/addons/
-
-# Restart
-systemctl restart openhab-dev
-```
-
-### Production Deployment
-
-```bash
-# Build with all checks
-mvn clean verify spotbugs:spotbugs
-
-# Copy signed JAR
-cp target/org.openhab.binding.net2-*.jar /opt/openhab/addons/
-
-# Backup previous version
-cp /opt/openhab/addons/org.openhab.binding.net2-*.jar /backup/
-
-# Restart OpenHAB
-systemctl restart openhab
-
-# Verify
-systemctl status openhab
-tail -f /var/log/openhab/openhab.log | grep net2
-```
-
-## Contributing
-
-1. Fork repository
-2. Create feature branch: `git checkout -b feature/my-feature`
-3. Make changes
-4. Run tests: `mvn clean test`
-5. Commit with message: `git commit -m "Add feature: ..."`
-6. Push: `git push origin feature/my-feature`
-7. Create Pull Request
-
-## License
-
-This binding is part of the openHAB project and follows EPL-2.0 license.
-
-## Support & Resources
-
-- **OpenHAB Docs**: https://www.openhab.org/docs/
-- **OpenHAB Community**: https://community.openhab.org/
-- **Net2 API Docs**: https://net2.example.com:8443/webapihelp/
-- **Maven Guide**: https://maven.apache.org/guides/
+- openHAB developer documentation: https://www.openhab.org/docs/developer/
+- openHAB community: https://community.openhab.org/
+- Net2 Local API documentation: on your Net2 server (the API help pages), or from Paxton
