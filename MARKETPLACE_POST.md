@@ -132,7 +132,7 @@ refusal.
 
 ## Resources
 
-- **Download JAR (v5.2.2):** [org.openhab.binding.net2-5.2.2.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.2/org.openhab.binding.net2-5.2.2.jar) (SIZE_TBD)
+- **Download JAR (v5.2.2):** [org.openhab.binding.net2-5.2.2.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.2/org.openhab.binding.net2-5.2.2.jar) (about 71 KB)
 - **Install:** copy the JAR into the openHAB `addons` folder (`/usr/share/openhab/addons/` on apt installs,
   `$OPENHAB_HOME/addons/` otherwise); it is picked up without a restart. Remove an older Net2 JAR first.
 - **Source code:** [github.com/Prinsessen/openhab-net2-binding](https://github.com/Prinsessen/openhab-net2-binding)
