@@ -60,7 +60,7 @@ class Net2DoorHandlerEventTest {
 
     @Test
     void theEventJsonCarriesTheTypeAndNotTheToken() {
-        JsonObject json = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 6203980);
+        JsonObject json = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 6203980, null, null);
         assertEquals("John", json.get("firstName").getAsString());
         assertEquals("Doe", json.get("lastName").getAsString());
         assertEquals("Front Door", json.get("doorName").getAsString());
@@ -69,5 +69,15 @@ class Net2DoorHandlerEventTest {
         assertEquals(112, json.get("eventType").getAsInt());
         assertEquals(0, json.get("eventSubType").getAsInt());
         assertFalse(json.has("tokenNumber"));
+    }
+
+    @Test
+    void netTwosNamesGoIntoTheJsonWhenKnown() {
+        JsonObject json = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 6203980,
+                "Access denied - example", "None");
+        assertEquals("Access denied - example", json.get("eventDescription").getAsString());
+        assertEquals("None", json.get("eventSubTypeDescription").getAsString());
+        JsonObject bare = Net2DoorHandler.buildAccessEvent(event(REFUSED), "Front Door", 6203980, null, null);
+        assertFalse(bare.has("eventDescription"));
     }
 }

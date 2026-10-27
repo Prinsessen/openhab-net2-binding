@@ -57,6 +57,20 @@ public class Net2LockoutGuard {
         return eventType != null && REFUSAL_EVENT_TYPES.contains(eventType);
     }
 
+    /**
+     * True when a refusal counts towards a lockout: a refusal type, and no lockdown behind it. A
+     * lockdown refuses everyone on purpose, and a re-instate would lift it at the ACU - on 2026-10-27
+     * a lockdown switched on by an openHAB rule was taken for the Net2 fault. So the guard stands
+     * down while openHAB's lockdown is on, or when Net2 names the event as a lockdown refusal.
+     */
+    public static boolean countsTowardsLockout(@Nullable Integer eventType, @Nullable String description,
+            boolean lockdownActive) {
+        if (!isRefusal(eventType) || lockdownActive) {
+            return false;
+        }
+        return description == null || !description.toLowerCase().contains("lockdown");
+    }
+
     public boolean isLockedOut() {
         return lockedOut;
     }

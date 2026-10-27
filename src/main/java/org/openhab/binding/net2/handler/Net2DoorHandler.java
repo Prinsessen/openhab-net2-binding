@@ -312,9 +312,11 @@ public class Net2DoorHandler extends BaseThingHandler {
 
     /**
      * The JSON for the entryLog and accessEvent channels: firstName, lastName, doorName, timestamp,
-     * doorId, eventType and eventSubType. The token number is left out: the user is already named.
+     * doorId, eventType, eventSubType and, when Net2 lists them, eventDescription and
+     * eventSubTypeDescription. The token number is left out: the user is already named.
      */
-    static JsonObject buildAccessEvent(JsonObject payload, String doorName, int doorId) {
+    static JsonObject buildAccessEvent(JsonObject payload, String doorName, int doorId, @Nullable String typeName,
+            @Nullable String subTypeName) {
         String fullName = payload.get("userName").getAsString();
         String[] nameParts = fullName.split(" ", 2);
         String lastName = nameParts.length > 0 ? nameParts[0] : "";
@@ -334,6 +336,12 @@ public class Net2DoorHandler extends BaseThingHandler {
         }
         if (payload.has("eventSubType") && !payload.get("eventSubType").isJsonNull()) {
             event.addProperty("eventSubType", payload.get("eventSubType").getAsInt());
+        }
+        if (typeName != null) {
+            event.addProperty("eventDescription", typeName);
+        }
+        if (subTypeName != null) {
+            event.addProperty("eventSubTypeDescription", subTypeName);
         }
         return event;
     }
@@ -366,7 +374,16 @@ public class Net2DoorHandler extends BaseThingHandler {
 
                 String label = getThing().getLabel();
                 String doorName = label != null ? label : "Door " + doorId;
-                JsonObject accessEvent = buildAccessEvent(payload, doorName, doorId);
+                Net2ServerHandler server = bridgeHandler;
+                Integer type = payload.has("eventType") && !payload.get("eventType").isJsonNull()
+                        ? payload.get("eventType").getAsInt()
+                        : null;
+                Integer subType = payload.has("eventSubType") && !payload.get("eventSubType").isJsonNull()
+                        ? payload.get("eventSubType").getAsInt()
+                        : null;
+                String typeName = server != null && type != null ? server.describeEventType(type) : null;
+                String subTypeName = server != null && subType != null ? server.describeEventSubType(subType) : null;
+                JsonObject accessEvent = buildAccessEvent(payload, doorName, doorId, typeName, subTypeName);
                 updateState(Net2BindingConstants.CHANNEL_ACCESS_EVENT, new StringType(accessEvent.toString()));
 
                 if (isEntry(payload)) {
@@ -375,10 +392,13 @@ public class Net2DoorHandler extends BaseThingHandler {
                     applyLockoutResult(lockoutGuard.onEntry(), doorName);
                 } else {
                     logger.info("Access event (not an entry): {}", accessEvent.toString());
-                    Integer eventType = accessEvent.has("eventType") ? accessEvent.get("eventType").getAsInt() : null;
-                    if (Net2LockoutGuard.isRefusal(eventType)) {
-                        Net2ServerHandler bridge = bridgeHandler;
-                        Net2ServerConfiguration config = bridge != null ? bridge.getServerConfiguration()
+                    boolean lockdown = server != null && server.isLockdownActive();
+                    if (Net2LockoutGuard.isRefusal(type) && !Net2LockoutGuard.countsTowardsLockout(type, typeName,
+                            lockdown)) {
+                        logger.info("{}: refusal during a lockdown ({}) - not counted as an ACU lockout", doorName,
+                                typeName != null ? typeName : "lockdown on");
+                    } else if (Net2LockoutGuard.countsTowardsLockout(type, typeName, lockdown)) {
+                        Net2ServerConfiguration config = server != null ? server.getServerConfiguration()
                                 : new Net2ServerConfiguration();
                         applyLockoutResult(lockoutGuard.onRefusal(Instant.now(), config.lockoutThreshold,
                                 Duration.ofMinutes(config.lockoutWindow), config.autoReinstate,

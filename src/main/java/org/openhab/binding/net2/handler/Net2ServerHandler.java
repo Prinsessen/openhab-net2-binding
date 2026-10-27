@@ -13,6 +13,7 @@
 package org.openhab.binding.net2.handler;
 
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
@@ -54,6 +55,9 @@ public class Net2ServerHandler extends BaseBridgeHandler {
     private @Nullable Net2SignalRClient signalRClient;
     private final Net2ActivityReportGenerator activityReportGenerator = new Net2ActivityReportGenerator();
     private int signalRReconnectAttempts = 0;
+    private volatile Map<Integer, String> eventTypes = Collections.emptyMap();
+    private volatile Map<Integer, String> eventSubTypes = Collections.emptyMap();
+    private volatile boolean lockdownActive = false;
     private static final int SIGNALR_MAX_RECONNECT_DELAY_SECONDS = 300;
     private static final int SIGNALR_INITIAL_RECONNECT_DELAY_SECONDS = 30;
 
@@ -141,6 +145,7 @@ public class Net2ServerHandler extends BaseBridgeHandler {
 
                 Net2ApiClient client = apiClient;
                 if (client != null) {
+                    loadEventTypes(client);
                     startSignalR(client, config);
                 }
 
@@ -175,6 +180,43 @@ public class Net2ServerHandler extends BaseBridgeHandler {
             signalRClient.disconnect();
             signalRClient = null;
         }
+    }
+
+    /** Net2's names for its event types, for accessEvent and the lockout guard. Read once per start. */
+    private void loadEventTypes(Net2ApiClient client) {
+        try {
+            String types = client.getEventTypeList("eventTypes");
+            eventTypes = Net2EventTypes.parse(types);
+            String subTypes = client.getEventTypeList("eventSubTypes");
+            eventSubTypes = Net2EventTypes.parse(subTypes);
+            if (eventTypes.isEmpty()) {
+                logger.warn("Net2 event types could not be read ({}); events carry only their numbers",
+                        Net2EventTypes.shape(types));
+            } else {
+                logger.info("Net2 event types loaded: {} types, {} sub types (112 = {})", eventTypes.size(),
+                        eventSubTypes.size(), eventTypes.getOrDefault(112, "not listed"));
+            }
+        } catch (Exception e) {
+            logger.warn("Net2 event types could not be read: {}", e.getMessage());
+        }
+    }
+
+    /** Net2's name for an event type, or null when unknown. */
+    public @Nullable String describeEventType(int type) {
+        return eventTypes.get(type);
+    }
+
+    /** Net2's name for an event sub type, or null when unknown. */
+    public @Nullable String describeEventSubType(int subType) {
+        return eventSubTypes.get(subType);
+    }
+
+    /**
+     * True while a lockdown that openHAB switched on is active. A lockdown refuses tokens and PINs on
+     * purpose, and a re-instate would lift it at the ACU, so the lockout guard stands down.
+     */
+    public boolean isLockdownActive() {
+        return lockdownActive;
     }
 
     private void startSignalR(Net2ApiClient client, Net2ServerConfiguration config) {
@@ -534,6 +576,7 @@ public class Net2ServerHandler extends BaseBridgeHandler {
             boolean success = client.controlLockdown(enable);
             if (success) {
                 logger.info("Lockdown {} successfully", enable ? "enabled" : "disabled");
+                lockdownActive = enable;
                 // Update channel state to reflect current status
                 updateState(Net2BindingConstants.CHANNEL_LOCKDOWN, (org.openhab.core.library.types.OnOffType) command);
             } else {

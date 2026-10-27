@@ -581,6 +581,25 @@ public class Net2ApiClient {
     }
 
     /**
+     * Net2's list of event types ({@code path} "eventTypes") or sub types ("eventSubTypes").
+     *
+     * @return the JSON body, or an empty string on failure
+     */
+    public String getEventTypeList(String path) throws IOException, InterruptedException {
+        ensureTokenValid();
+
+        HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/events/" + path)).GET()
+                .header("Authorization", "Bearer " + accessToken).build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        if (response.statusCode() == 200) {
+            return response.body();
+        }
+        logger.warn("Failed to read the Net2 {}. Status: {}", path, response.statusCode());
+        return "";
+    }
+
+    /**
      * Retrieve access events from the Net2 API for the specified number of hours.
      *
      * @param hours number of hours to look back

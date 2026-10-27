@@ -101,4 +101,15 @@ class Net2LockoutGuardTest {
         assertFalse(Net2LockoutGuard.isRefusal(23), "an unknown token is no lockout of known users");
         assertFalse(Net2LockoutGuard.isRefusal(null));
     }
+
+    @Test
+    void aLockdownIsNoLockout() {
+        // 2026-10-27: an openHAB rule switched the Net2 lockdown on, and every attempt was refused (112)
+        assertFalse(Net2LockoutGuard.countsTowardsLockout(112, null, true), "openHAB's lockdown is on");
+        assertFalse(Net2LockoutGuard.countsTowardsLockout(112, "Access denied - Lockdown active", false),
+                "Net2 names it a lockdown refusal");
+        assertTrue(Net2LockoutGuard.countsTowardsLockout(112, null, false));
+        assertTrue(Net2LockoutGuard.countsTowardsLockout(25, "Access denied - invalid time", false));
+        assertFalse(Net2LockoutGuard.countsTowardsLockout(20, null, false));
+    }
 }
