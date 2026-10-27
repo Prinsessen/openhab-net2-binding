@@ -170,7 +170,7 @@
 	<channel-type id="listUsers">
 		<item-type>String</item-type>
 		<label>List Users</label>
-		<description>Trigger to list all users in the system; full JSON payload logged to openhab.log</description>
+		<description>Send ON to list all users; the channel then holds them as JSON, with every PIN left out</description>
 		<state readOnly="false"/>
 	</channel-type>
 

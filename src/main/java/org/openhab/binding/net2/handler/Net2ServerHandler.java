@@ -576,7 +576,41 @@ public class Net2ServerHandler extends BaseBridgeHandler {
             logger.warn("No users returned by API");
             return;
         }
-        logger.debug("Users JSON payload ({} characters, holds PINs - not logged)", usersJson.length());
+        String withoutPins = withoutPins(usersJson);
+        updateState(Net2BindingConstants.CHANNEL_LIST_USERS, new StringType(withoutPins));
+        logger.info("Users listed on the listUsers channel ({} characters, PINs left out)", withoutPins.length());
+    }
+
+    /**
+     * The users JSON with every PIN field removed, at any depth: the list goes to an item, and item
+     * states end up in events.log and persistence.
+     */
+    static String withoutPins(String usersJson) {
+        try {
+            JsonElement root = JsonParser.parseString(usersJson);
+            if (!root.isJsonArray() && !root.isJsonObject()) {
+                return "[]";
+            }
+            strip(root);
+            return root.toString();
+        } catch (RuntimeException e) {
+            return "[]";
+        }
+    }
+
+    private static void strip(JsonElement e) {
+        if (e.isJsonArray()) {
+            e.getAsJsonArray().forEach(Net2ServerHandler::strip);
+        } else if (e.isJsonObject()) {
+            JsonObject o = e.getAsJsonObject();
+            for (String key : new java.util.ArrayList<>(o.keySet())) {
+                if (key.toLowerCase().contains("pin")) {
+                    o.remove(key);
+                } else {
+                    strip(o.get(key));
+                }
+            }
+        }
     }
 
     private void handleLockdown(Command command) throws Exception {
