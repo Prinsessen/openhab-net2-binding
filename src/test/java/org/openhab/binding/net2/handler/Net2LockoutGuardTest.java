@@ -96,7 +96,8 @@ class Net2LockoutGuardTest {
     void onlyRefusalTypesCount() {
         assertTrue(Net2LockoutGuard.isRefusal(112));
         assertTrue(Net2LockoutGuard.isRefusal(24));
-        assertFalse(Net2LockoutGuard.isRefusal(17), "the step before a PIN");
+        // 17 is "Access denied" in Net2's own names; as the step before a PIN it is followed by an entry
+        assertTrue(Net2LockoutGuard.isRefusal(17));
         assertFalse(Net2LockoutGuard.isRefusal(20));
         assertFalse(Net2LockoutGuard.isRefusal(23), "an unknown token is no lockout of known users");
         assertFalse(Net2LockoutGuard.isRefusal(null));
@@ -111,5 +112,21 @@ class Net2LockoutGuardTest {
         assertTrue(Net2LockoutGuard.countsTowardsLockout(112, null, false));
         assertTrue(Net2LockoutGuard.countsTowardsLockout(25, "Access denied - invalid time", false));
         assertFalse(Net2LockoutGuard.countsTowardsLockout(20, null, false));
+    }
+
+    @Test
+    void theStepBeforeAPinIsClearedByThePin() {
+        Net2LockoutGuard g = new Net2LockoutGuard();
+        for (String t : new String[] { "06:54:46", "07:10:00", "07:20:00" }) {
+            assertEquals(NONE, refuse(g, t, true), "17/82 at " + t);
+            assertEquals(NONE, g.onEntry(), "the PIN a second later");
+        }
+        assertFalse(g.isLockedOut());
+    }
+
+    @Test
+    void lockdownRefusalsAsNet2NamesThem() {
+        assertFalse(Net2LockoutGuard.countsTowardsLockout(112, "Access Denied - Lockdown in Progress", false));
+        assertTrue(Net2LockoutGuard.countsTowardsLockout(17, "Access denied", false));
     }
 }

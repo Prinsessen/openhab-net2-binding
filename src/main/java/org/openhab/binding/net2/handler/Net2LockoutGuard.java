@@ -34,8 +34,14 @@ import org.eclipse.jdt.annotation.Nullable;
 @NonNullByDefault
 public class Net2LockoutGuard {
 
-    /** Event types that refuse a known user: 24, 25, 27 (access denied) and 112 (the lockout). */
-    static final Set<Integer> REFUSAL_EVENT_TYPES = Set.of(24, 25, 27, 112);
+    /**
+     * Event types that refuse a known user, as Net2 v7.01 names them: 16 and 17 "Access denied", 24,
+     * 25 and 27 (access denied), 112 "Access Denied - Lockdown in Progress". 16/17 with sub type 82 is
+     * also the step before a PIN: in two weeks of logs every one was followed by an entry within 60 s,
+     * which clears the count, and never two in a row at one door. 112 never counts while it says
+     * "Lockdown" (see {@link #countsTowardsLockout}).
+     */
+    static final Set<Integer> REFUSAL_EVENT_TYPES = Set.of(16, 17, 24, 25, 27, 112);
 
     /** What one event means for the door. */
     public enum Result {
