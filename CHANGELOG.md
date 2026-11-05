@@ -5,7 +5,7 @@ All notable changes to the Paxton Net2 Binding are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versions follow the openHAB
 release the binding is built for (5.2.x for openHAB 5.2).
 
-## [5.2.3] - unreleased
+## [5.2.3] - 2026-11-05
 
 ### Fixed
 - **A door command the Net2 server never answers no longer waits for ever.** No HTTP call had a timeout: on
