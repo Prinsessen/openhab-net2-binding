@@ -4,7 +4,14 @@ This binding connects openHAB to a Paxton Net2 access control server through the
 SignalR live events): door control, live door state, access logging, user management, building lockdown, and
 detection of an ACU that has started to refuse every user.
 
-## What is new in 5.2.2
+## What is new in 5.2.3
+
+- **Door commands no longer wait for ever.** None of the binding's HTTP calls had a timeout, so a door command
+  the Net2 server never answered was waited for silently and the door stayed shut. Now hold-open and close give
+  up after 5 s and are sent once more (both are idempotent); other calls have 30 s. Every unanswered attempt is
+  logged at WARN, and a timeout no longer takes the door thing OFFLINE.
+
+## What was new in 5.2.2
 
 - **ACU lockout detection and Re-Instate.** Net2 can make an ACU refuse every token and PIN, or run its time
   schedules wrongly, until the ACU is re-instated in the Net2 software. The binding notices when one door
@@ -19,7 +26,8 @@ detection of an ACU that has started to refuse every user.
 
 ## Features
 
-- **Door control**: hold open, close, timed open (timing on the Net2 side)
+- **Door control**: hold open, close, timed open (timing on the Net2 side); an unanswered hold-open or close is
+  tried once more after 5 s
 - **Live door state**: SignalR `DoorStatusEvents`, with a REST poll every 30 s (default) as the safety net
 - **SignalR auto-reconnect** with a fresh login after a Net2 restart or network outage
 - **Access logging**: last user and time per door, JSON entry log, JSON access events
@@ -132,7 +140,7 @@ refusal.
 
 ## Resources
 
-- **Download JAR (v5.2.2):** [org.openhab.binding.net2-5.2.2.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.2/org.openhab.binding.net2-5.2.2.jar) (about 71 KB)
+- **Download JAR (v5.2.3):** [org.openhab.binding.net2-5.2.3.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.3/org.openhab.binding.net2-5.2.3.jar) (about 70 KB)
 - **Install:** copy the JAR into the openHAB `addons` folder (`/usr/share/openhab/addons/` on apt installs,
   `$OPENHAB_HOME/addons/` otherwise); it is picked up without a restart. Remove an older Net2 JAR first.
 - **Source code:** [github.com/Prinsessen/openhab-net2-binding](https://github.com/Prinsessen/openhab-net2-binding)

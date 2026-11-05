@@ -4,7 +4,7 @@ This binding connects openHAB to a Paxton Net2 access control server through the
 SignalR live events). It controls doors, reports door state and access events, manages users, switches the
 Net2 building lockdown, and detects an ACU that has started to refuse every user.
 
-Current release: **5.2.2** (2026-10-27). See [CHANGELOG.md](CHANGELOG.md).
+Current release: **5.2.3** (2026-11-05): door commands with a deadline and one more try. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
@@ -55,7 +55,7 @@ The following products do **not** work with the Net2 Local API and therefore not
 
 This is a custom binding, not part of the openHAB distribution.
 
-1. Download `org.openhab.binding.net2-5.2.2.jar` from the
+1. Download `org.openhab.binding.net2-5.2.3.jar` from the
    [GitHub releases](https://github.com/Prinsessen/openhab-net2-binding/releases).
 2. Copy it into the openHAB `addons` folder: `/usr/share/openhab/addons/` on an apt/deb installation,
    `$OPENHAB_HOME/addons/` otherwise. When upgrading, remove the previous Net2 JAR from that folder first, so
