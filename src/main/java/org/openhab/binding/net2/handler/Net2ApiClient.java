@@ -19,6 +19,8 @@ import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.time.Duration;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -59,6 +61,19 @@ public class Net2ApiClient {
     private ZonedDateTime tokenExpiry = ZonedDateTime.now(ZoneOffset.UTC);
     private final ReentrantLock tokenLock = new ReentrantLock();
 
+    /*
+     * Every call has a deadline (5.2.3, 2026-11-05). Until then none had: at 06:53 that day the
+     * Net2 server never answered a hold-open, the binding waited without a word and the company
+     * door stayed shut on an arrival; the same command a few minutes later was answered in 0.09 s.
+     * A door command is answered in well under a second, so 5 s means it is not going to be;
+     * other calls (events over hours, user lists) get 30 s.
+     */
+    static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(5);
+    static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(30);
+    static final Duration DOOR_TIMEOUT = Duration.ofSeconds(5);
+    /** Door commands are idempotent (hold open, close): an unanswered one is sent once more. */
+    static final int DOOR_COMMAND_ATTEMPTS = 2;
+
     public Net2ApiClient(Net2ServerConfiguration config) {
         String host = config.hostname;
         if (host.startsWith("http://") || host.startsWith("https://")) {
@@ -73,7 +88,7 @@ public class Net2ApiClient {
         this.tlsVerification = config.tlsVerification != null ? config.tlsVerification : true;
 
         // Create HTTP client
-        HttpClient.Builder builder = HttpClient.newBuilder();
+        HttpClient.Builder builder = HttpClient.newBuilder().connectTimeout(CONNECT_TIMEOUT);
         this.httpClient = builder.build();
 
         try {
@@ -83,6 +98,39 @@ public class Net2ApiClient {
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("Invalid base URL for Net2 API", e);
         }
+    }
+
+    /** Every request, with REQUEST_TIMEOUT unless it has its own. */
+    private HttpResponse<String> send(HttpRequest request) throws IOException, InterruptedException {
+        HttpRequest timed = request.timeout().isPresent() ? request
+                : HttpRequest.newBuilder(request, (name, value) -> true).timeout(REQUEST_TIMEOUT).build();
+        return httpClient.send(timed, HttpResponse.BodyHandlers.ofString());
+    }
+
+    /**
+     * A door command, tried DOOR_COMMAND_ATTEMPTS times when Net2 does not answer in time or
+     * answers with an error. False when no attempt was accepted - the caller logs that; a
+     * timeout is not thrown on, so the door thing is not taken OFFLINE for one unanswered call.
+     */
+    private boolean doorCommand(String what, int doorId, HttpRequest untimed) throws IOException, InterruptedException {
+        HttpRequest request = HttpRequest.newBuilder(untimed, (name, value) -> true).timeout(DOOR_TIMEOUT).build();
+        for (int attempt = 1; attempt <= DOOR_COMMAND_ATTEMPTS; attempt++) {
+            try {
+                HttpResponse<String> response = send(request);
+                if (response.statusCode() == 200) {
+                    if (attempt > 1) {
+                        logger.info("Net2 accepted {} of door {} on attempt {}", what, doorId, attempt);
+                    }
+                    return true;
+                }
+                logger.warn("Net2 answered {} to {} of door {} (attempt {} of {})", response.statusCode(), what,
+                        doorId, attempt, DOOR_COMMAND_ATTEMPTS);
+            } catch (HttpTimeoutException e) {
+                logger.warn("Net2 did not answer {} of door {} within {} s (attempt {} of {})", what, doorId,
+                        DOOR_TIMEOUT.toSeconds(), attempt, DOOR_COMMAND_ATTEMPTS);
+            }
+        }
+        return false;
     }
 
     /**
@@ -104,7 +152,7 @@ public class Net2ApiClient {
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8").build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request);
 
             if (response.statusCode() == 200) {
                 JsonObject jsonResponse = JsonParser.parseString(response.body()).getAsJsonObject();
@@ -146,7 +194,7 @@ public class Net2ApiClient {
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8").build();
 
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            HttpResponse<String> response = send(request);
 
             if (response.statusCode() == 200) {
                 JsonObject jsonResponse = JsonParser.parseString(response.body()).getAsJsonObject();
@@ -196,7 +244,7 @@ public class Net2ApiClient {
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/doors/status")).GET()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
 
         if (response.statusCode() == 200) {
             return response.body();
@@ -214,7 +262,7 @@ public class Net2ApiClient {
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/doors")).GET()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
 
         if (response.statusCode() == 200) {
             return response.body();
@@ -236,8 +284,7 @@ public class Net2ApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        return response.statusCode() == 200;
+        return doorCommand("hold-open", doorId, request);
     }
 
     /**
@@ -255,7 +302,7 @@ public class Net2ApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         return response.statusCode() == 200;
     }
 
@@ -272,8 +319,7 @@ public class Net2ApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        return response.statusCode() == 200;
+        return doorCommand("close", doorId, request);
     }
 
     /**
@@ -289,7 +335,7 @@ public class Net2ApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(payload)).header("Authorization", "Bearer " + accessToken)
                 .header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         return response.statusCode() == 200 || response.statusCode() == 202;
     }
 
@@ -309,7 +355,7 @@ public class Net2ApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(payload.toString()))
                 .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
 
         if (response.statusCode() == 200) {
             logger.info("Lockdown {} successfully", enable ? "enabled" : "disabled");
@@ -380,7 +426,7 @@ public class Net2ApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200 || response.statusCode() == 201) {
             JsonObject responseObj = JsonParser.parseString(response.body()).getAsJsonObject();
             int userId = responseObj.get("id").getAsInt();
@@ -407,7 +453,7 @@ public class Net2ApiClient {
                 .POST(HttpRequest.BodyPublishers.ofString(body.toString()))
                 .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200 || response.statusCode() == 201) {
             logger.info("Token added to user {}: {}", userId, tokenNumber);
             return true;
@@ -426,7 +472,7 @@ public class Net2ApiClient {
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/users/" + userIdentifier)).DELETE()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200 || response.statusCode() == 204) {
             logger.info("User deleted successfully: {}", userIdentifier);
             return true;
@@ -446,7 +492,7 @@ public class Net2ApiClient {
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/accesslevels")).GET()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200) {
             Map<Integer, String> map = new HashMap<>();
             JsonElement el = JsonParser.parseString(response.body());
@@ -482,7 +528,7 @@ public class Net2ApiClient {
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/users")).GET()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200) {
             logger.debug("Fetched users list");
             return response.body();
@@ -530,7 +576,7 @@ public class Net2ApiClient {
                 .uri(URI.create(baseUrl + "/users/" + userId + "/doorpermissionset")).GET()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200) {
             logger.info("Fetched door permission set for user {}", userId);
             return response.body();
@@ -553,7 +599,7 @@ public class Net2ApiClient {
                 .PUT(HttpRequest.BodyPublishers.ofString(permissionSetJson))
                 .header("Authorization", "Bearer " + accessToken).header("Content-Type", "application/json").build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200 || response.statusCode() == 204) {
             logger.info("Replaced door permission set for user {}", userId);
             return true;
@@ -591,7 +637,7 @@ public class Net2ApiClient {
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/events/" + path)).GET()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
         if (response.statusCode() == 200) {
             return response.body();
         }
@@ -621,7 +667,7 @@ public class Net2ApiClient {
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/events?" + query)).GET()
                 .header("Authorization", "Bearer " + accessToken).build();
 
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = send(request);
 
         if (response.statusCode() == 200) {
             logger.debug("Retrieved events for last {} hours", hours);

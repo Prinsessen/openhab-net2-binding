@@ -5,6 +5,18 @@ All notable changes to the Paxton Net2 Binding are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versions follow the openHAB
 release the binding is built for (5.2.x for openHAB 5.2).
 
+## [5.2.3] - unreleased
+
+### Fixed
+- **A door command the Net2 server never answers no longer waits for ever.** No HTTP call had a timeout: on
+  2026-11-05 a hold-open sent on an arrival was never answered, the binding waited without a log line and the
+  door stayed shut (the same command a few minutes later was answered in 0.09 s). Now every call has a 5 s
+  connect timeout and a 30 s request timeout; hold-open and close have 5 s and are sent once more when Net2 does
+  not answer or answers with an error (both are idempotent). Each unanswered attempt is logged at WARN, and a
+  door command that is not accepted ends in the existing "Failed to open/close door" ERROR - a timeout no longer
+  throws, so one unanswered call does not take the door thing OFFLINE. Tests: `Net2ApiClientTimeoutTest`
+  (a local fake Net2 that does not answer; three of its four tests hang on 5.2.2).
+
 ## [5.2.2] - 2026-10-27
 
 ### Added
