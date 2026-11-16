@@ -125,6 +125,18 @@ class Net2LockoutGuardTest {
     }
 
     @Test
+    void aRefusalWithNet2sOwnReasonIsNoLockout() {
+        // 2026-11-16: the alarm link at one door had stopped unsetting; one user presented a token seven
+        // times (17/82), another five times (16/82, 17/82) - each run read as a lockout and re-instated
+        assertFalse(Net2LockoutGuard.countsTowardsLockout(17, "Access denied", 82, false), "17/82, alarm set");
+        assertFalse(Net2LockoutGuard.countsTowardsLockout(16, "Access denied", 82, false), "16/82, alarm set");
+        assertTrue(Net2LockoutGuard.countsTowardsLockout(17, "Access denied", null, false), "no sub type");
+        assertTrue(Net2LockoutGuard.countsTowardsLockout(17, "Access denied", 0, false), "another sub type");
+        assertTrue(Net2LockoutGuard.countsTowardsLockout(112, null, 0, false));
+        assertFalse(Net2LockoutGuard.countsTowardsLockout(112, null, 0, true), "lockdown still stands it down");
+    }
+
+    @Test
     void lockdownRefusalsAsNet2NamesThem() {
         assertFalse(Net2LockoutGuard.countsTowardsLockout(112, "Access Denied - Lockdown in Progress", false));
         assertTrue(Net2LockoutGuard.countsTowardsLockout(17, "Access denied", false));

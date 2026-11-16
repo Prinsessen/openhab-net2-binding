@@ -5,6 +5,18 @@ All notable changes to the Paxton Net2 Binding are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versions follow the openHAB
 release the binding is built for (5.2.x for openHAB 5.2).
 
+## [5.2.4] - 2026-11-16
+
+### Fixed
+- **A refusal for which Net2 gives its own reason no longer counts as an ACU lockout.** Events 16/17 with sub
+  type 82 come when the intruder alarm is set (the first presentation unsets it through the alarm link, the next
+  one opens) and as the step before a PIN. On 2026-11-16 the alarm link at one door had stopped unsetting (a
+  Net2 site setting); people presented their tokens again and again, the guard counted three refusals, raised a
+  lockout and re-instated the ACU - twice that morning, for nothing. Sub type 82 refusals are now logged at INFO
+  as "Net2 gives a reason" and not counted. Test: `Net2LockoutGuardTest.aRefusalWithNet2sOwnReasonIsNoLockout`.
+  Proven on the live system the same day: 11 refusals with sub type 82 on the armed alarm, four within 30 s,
+  none counted - no lockout, no re-instate.
+
 ## [5.2.3] - 2026-11-05
 
 ### Fixed

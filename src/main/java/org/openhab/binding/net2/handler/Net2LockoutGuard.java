@@ -43,6 +43,15 @@ public class Net2LockoutGuard {
      */
     static final Set<Integer> REFUSAL_EVENT_TYPES = Set.of(16, 17, 24, 25, 27, 112);
 
+    /**
+     * Sub types of a refusal that give Net2's own reason, so they are not the ACU fault. 82 comes with
+     * 16/17 when the intruder alarm is set (the first presentation unsets it through the alarm link,
+     * the next one opens) and as the step before a PIN. At a door whose alarm link had stopped
+     * unsetting (2026-11-13..16, a Net2 site setting), people presented their token again and again;
+     * counted, that read as a lockout and the ACU was re-instated three times for nothing.
+     */
+    static final Set<Integer> REASONED_REFUSAL_SUB_TYPES = Set.of(82);
+
     /** What one event means for the door. */
     public enum Result {
         /** nothing changes */
@@ -71,7 +80,19 @@ public class Net2LockoutGuard {
      */
     public static boolean countsTowardsLockout(@Nullable Integer eventType, @Nullable String description,
             boolean lockdownActive) {
+        return countsTowardsLockout(eventType, description, null, lockdownActive);
+    }
+
+    /**
+     * As above, and a refusal whose sub type gives Net2's own reason (see
+     * {@link #REASONED_REFUSAL_SUB_TYPES}) does not count either.
+     */
+    public static boolean countsTowardsLockout(@Nullable Integer eventType, @Nullable String description,
+            @Nullable Integer subType, boolean lockdownActive) {
         if (!isRefusal(eventType) || lockdownActive) {
+            return false;
+        }
+        if (subType != null && REASONED_REFUSAL_SUB_TYPES.contains(subType)) {
             return false;
         }
         return description == null || !description.toLowerCase().contains("lockdown");

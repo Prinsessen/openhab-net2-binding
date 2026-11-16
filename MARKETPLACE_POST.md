@@ -4,7 +4,15 @@ This binding connects openHAB to a Paxton Net2 access control server through the
 SignalR live events): door control, live door state, access logging, user management, building lockdown, and
 detection of an ACU that has started to refuse every user.
 
-## What is new in 5.2.3
+## What is new in 5.2.4
+
+- **No false ACU lockout when the intruder alarm is set.** Net2 refuses a token with event 16/17 and sub type 82
+  when the intruder alarm is set (the first presentation unsets the alarm through the alarm link, the next one
+  opens) and as the step before a PIN. If people present their token again and again - for example when the
+  alarm link does not unset - the lockout guard used to count those refusals, raise `lockout` and re-instate the
+  ACU for nothing. Refusals with sub type 82 are now logged at INFO and not counted.
+
+## What was new in 5.2.3
 
 - **Door commands no longer wait for ever.** None of the binding's HTTP calls had a timeout, so a door command
   the Net2 server never answered was waited for silently and the door stayed shut. Now hold-open and close give
@@ -140,7 +148,7 @@ refusal.
 
 ## Resources
 
-- **Download JAR (v5.2.3):** [org.openhab.binding.net2-5.2.3.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.3/org.openhab.binding.net2-5.2.3.jar) (about 70 KB)
+- **Download JAR (v5.2.4):** [org.openhab.binding.net2-5.2.4.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.4/org.openhab.binding.net2-5.2.4.jar) (about 70 KB)
 - **Install:** copy the JAR into the openHAB `addons` folder (`/usr/share/openhab/addons/` on apt installs,
   `$OPENHAB_HOME/addons/` otherwise); it is picked up without a restart. Remove an older Net2 JAR first.
 - **Source code:** [github.com/Prinsessen/openhab-net2-binding](https://github.com/Prinsessen/openhab-net2-binding)

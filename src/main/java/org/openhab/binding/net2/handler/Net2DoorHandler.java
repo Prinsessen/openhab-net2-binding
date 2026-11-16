@@ -405,10 +405,15 @@ public class Net2DoorHandler extends BaseThingHandler {
                     logger.info("Access event (not an entry): {}", accessEvent.toString());
                     boolean lockdown = server != null && server.isLockdownActive();
                     if (Net2LockoutGuard.isRefusal(type) && !Net2LockoutGuard.countsTowardsLockout(type, typeName,
-                            lockdown)) {
-                        logger.info("{}: refusal during a lockdown ({}) - not counted as an ACU lockout", doorName,
-                                typeName != null ? typeName : "lockdown on");
-                    } else if (Net2LockoutGuard.countsTowardsLockout(type, typeName, lockdown)) {
+                            subType, lockdown)) {
+                        if (Net2LockoutGuard.countsTowardsLockout(type, typeName, lockdown)) {
+                            logger.info("{}: refusal with sub type {} (Net2 gives a reason: alarm set or PIN step)"
+                                    + " - not counted as an ACU lockout", doorName, subType);
+                        } else {
+                            logger.info("{}: refusal during a lockdown ({}) - not counted as an ACU lockout",
+                                    doorName, typeName != null ? typeName : "lockdown on");
+                        }
+                    } else if (Net2LockoutGuard.countsTowardsLockout(type, typeName, subType, lockdown)) {
                         Net2ServerConfiguration config = server != null ? server.getServerConfiguration()
                                 : new Net2ServerConfiguration();
                         applyLockoutResult(lockoutGuard.onRefusal(Instant.now(), config.lockoutThreshold,
