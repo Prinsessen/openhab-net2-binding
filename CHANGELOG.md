@@ -5,6 +5,23 @@ All notable changes to the Paxton Net2 Binding are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versions follow the openHAB
 release the binding is built for (5.2.x for openHAB 5.2).
 
+## [5.2.5] - 2026-11-18
+
+### Fixed
+- **A server handler that is disposed while it connects no longer leaves a poll and a SignalR connection
+  behind.** `initialize()` authenticates in the background and only then opens SignalR and schedules the door
+  poll. When the handler was disposed during that time - a JAR replace or a things-file reload, where openHAB
+  initializes and disposes in quick succession - `dispose()` found nothing to stop yet, and the background task
+  then opened a second SignalR connection and started the poll for a handler that no longer existed. The poll
+  ran until openHAB was restarted, logging "Handler Net2ServerHandler tried updating the thing status although
+  the handler was already disposed" every 10 minutes (seen after the 5.2.4 JAR replace on 2026-11-16, 253
+  times in two days). Now `dispose()` marks the handler disposed and cancels the background task under one
+  lock; the task checks the mark before each step, and nothing is scheduled or connected after it is set.
+  Test: `Net2ServerHandlerDisposeTest` (a local fake Net2 that answers the token only after the handler is
+  disposed; on 5.2.4 the disposed handler negotiates SignalR twice and polls the doors).
+  Note: a leftover from an earlier version's JAR replace stays until the next openHAB restart - only the
+  code that is replaced can clean up after itself.
+
 ## [5.2.4] - 2026-11-16
 
 ### Fixed

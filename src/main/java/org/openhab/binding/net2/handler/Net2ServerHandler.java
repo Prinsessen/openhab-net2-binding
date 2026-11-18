@@ -16,6 +16,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -51,6 +52,16 @@ public class Net2ServerHandler extends BaseBridgeHandler {
     private final Logger logger = LoggerFactory.getLogger(Net2ServerHandler.class);
 
     private @Nullable ScheduledFuture<?> refreshJob;
+    private @Nullable Future<?> initJob;
+    /**
+     * Set by dispose(). initialize() connects in the background; a handler disposed while that runs (a JAR
+     * replace, a things-file reload) must not go on to open SignalR or schedule the door poll - on 5.2.4 it did,
+     * and the poll ran every 10 minutes for a handler that no longer existed (2026-11-16). Everything that
+     * schedules or opens something checks it under {@link #lifecycleLock}, and dispose() sets it under the same
+     * lock, so nothing can be started between the check and the assignment.
+     */
+    private volatile boolean disposed = false;
+    private final Object lifecycleLock = new Object();
     private @Nullable ScheduledFuture<?> signalRReconnectJob;
     private @Nullable Net2ApiClient apiClient;
     private @Nullable Net2SignalRClient signalRClient;
@@ -137,56 +148,92 @@ public class Net2ServerHandler extends BaseBridgeHandler {
         // Set status to UNKNOWN during initialization
         updateStatus(ThingStatus.UNKNOWN, ThingStatusDetail.CONFIGURATION_PENDING, "Connecting to Net2 server...");
 
-        // Create API client and authenticate in background to avoid blocking openHAB startup
-        scheduler.execute(() -> {
-            try {
-                apiClient = new Net2ApiClient(config);
+        synchronized (lifecycleLock) {
+            disposed = false;
+            // Create API client and authenticate in background to avoid blocking openHAB startup
+            initJob = scheduler.submit(() -> connect(config));
+        }
+    }
 
-                // Test authentication
-                if (!apiClient.authenticate()) {
-                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                            "Failed to authenticate with Net2 server");
+    /** The background half of initialize(). Stops at each step once the handler has been disposed. */
+    private void connect(Net2ServerConfiguration config) {
+        try {
+            Net2ApiClient client = new Net2ApiClient(config);
+            synchronized (lifecycleLock) {
+                if (disposed) {
                     return;
                 }
+                apiClient = client;
+            }
 
-                updateStatus(ThingStatus.ONLINE);
+            // Test authentication
+            boolean authenticated = client.authenticate();
+            if (disposed) {
+                logger.debug("Net2 server handler disposed while connecting - not starting");
+                return;
+            }
+            if (!authenticated) {
+                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                        "Failed to authenticate with Net2 server");
+                return;
+            }
 
-                Net2ApiClient client = apiClient;
-                if (client != null) {
-                    loadEventTypes(client);
-                    startSignalR(client, config);
+            updateStatus(ThingStatus.ONLINE);
+
+            loadEventTypes(client);
+            startSignalR(client, config);
+
+            // Schedule periodic refresh (now 10 minutes with SignalR providing instant updates)
+            int refreshInterval = config.refreshInterval > 0 ? config.refreshInterval : 600;
+            synchronized (lifecycleLock) {
+                if (disposed) {
+                    return;
                 }
-
-                // Schedule periodic refresh (now 10 minutes with SignalR providing instant updates)
-                int refreshInterval = config.refreshInterval > 0 ? config.refreshInterval : 600;
                 refreshJob = scheduler.scheduleWithFixedDelay(this::refreshDoorStatus, 0, refreshInterval,
                         TimeUnit.SECONDS);
-            } catch (Exception e) {
-                logger.error("Failed to initialize Net2 API client", e);
-                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                        "Error initializing API: " + e.getMessage());
             }
-        });
+        } catch (Exception e) {
+            if (disposed) {
+                logger.debug("Net2 server handler disposed while connecting", e);
+                return;
+            }
+            logger.error("Failed to initialize Net2 API client", e);
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "Error initializing API: " + e.getMessage());
+        }
     }
 
     @Override
     public void dispose() {
         logger.debug("Disposing Net2 Server handler");
 
-        if (refreshJob != null) {
-            refreshJob.cancel(true);
-            refreshJob = null;
-        }
+        synchronized (lifecycleLock) {
+            disposed = true;
 
-        cancelSignalRReconnect();
+            Future<?> init = initJob;
+            if (init != null) {
+                init.cancel(false); // not started yet: never runs; running: stops at its next check
+                initJob = null;
+            }
 
-        if (apiClient != null) {
-            apiClient.close();
-        }
+            ScheduledFuture<?> refresh = refreshJob;
+            if (refresh != null) {
+                refresh.cancel(true);
+                refreshJob = null;
+            }
 
-        if (signalRClient != null) {
-            signalRClient.disconnect();
-            signalRClient = null;
+            cancelSignalRReconnect();
+
+            Net2ApiClient client = apiClient;
+            if (client != null) {
+                client.close();
+            }
+
+            Net2SignalRClient sr = signalRClient;
+            if (sr != null) {
+                sr.disconnect();
+                signalRClient = null;
+            }
         }
     }
 
@@ -236,6 +283,9 @@ public class Net2ServerHandler extends BaseBridgeHandler {
     }
 
     private void startSignalR(Net2ApiClient client, Net2ServerConfiguration config) {
+        if (disposed) {
+            return;
+        }
         if (signalRClient != null && signalRClient.isConnected()) {
             return;
         }
@@ -258,10 +308,21 @@ public class Net2ServerHandler extends BaseBridgeHandler {
             newClient.setOnConnectedCallback(this::onSignalRConnected);
             newClient.setOnDisconnectedCallback(this::onSignalRDisconnected);
 
-            // Assign before connecting so callback can access it
-            signalRClient = newClient;
+            // Assign before connecting so callback can access it - and so dispose() can disconnect it
+            synchronized (lifecycleLock) {
+                if (disposed) {
+                    return;
+                }
+                signalRClient = newClient;
+            }
 
             newClient.connect();
+
+            if (disposed) {
+                // dispose() ran while connecting: it disconnected this client before its socket was open
+                newClient.disconnect();
+                return;
+            }
 
             // Verify connection actually succeeded before declaring victory
             if (!newClient.isConnected()) {
@@ -287,6 +348,9 @@ public class Net2ServerHandler extends BaseBridgeHandler {
      * Schedules an automatic reconnection with exponential backoff.
      */
     private void onSignalRDisconnected() {
+        if (disposed) {
+            return;
+        }
         logger.warn("SignalR disconnected — scheduling automatic reconnection");
         Net2ServerConfiguration config = getConfigAs(Net2ServerConfiguration.class);
         scheduleSignalRReconnect(config);
@@ -297,6 +361,15 @@ public class Net2ServerHandler extends BaseBridgeHandler {
      * Delay: 30s, 60s, 120s, 240s, 300s (capped at 5 minutes).
      */
     private void scheduleSignalRReconnect(Net2ServerConfiguration config) {
+        synchronized (lifecycleLock) {
+            if (disposed) {
+                return;
+            }
+            scheduleSignalRReconnectLocked(config);
+        }
+    }
+
+    private void scheduleSignalRReconnectLocked(Net2ServerConfiguration config) {
         cancelSignalRReconnect();
 
         int delay = Math.min(
@@ -307,6 +380,9 @@ public class Net2ServerHandler extends BaseBridgeHandler {
         logger.info("SignalR reconnect attempt {} scheduled in {} seconds", signalRReconnectAttempts, delay);
 
         signalRReconnectJob = scheduler.schedule(() -> {
+            if (disposed) {
+                return;
+            }
             Net2ApiClient client = apiClient;
             if (client == null) {
                 logger.debug("API client not initialized for SignalR reconnect, will retry");
@@ -339,6 +415,9 @@ public class Net2ServerHandler extends BaseBridgeHandler {
     }
 
     private void handleSignalREvent(String target, JsonObject payload) {
+        if (disposed) {
+            return;
+        }
         // Support both deviceId and doorId (different event types use different field names)
         if (!payload.has("deviceId") && !payload.has("doorId")) {
             return;
@@ -356,6 +435,9 @@ public class Net2ServerHandler extends BaseBridgeHandler {
      * Refresh door status for all child things
      */
     private void refreshDoorStatus() {
+        if (disposed) {
+            return;
+        }
         logger.debug("refreshDoorStatus: Starting API poll");
         Net2ApiClient client = apiClient;
         if (client == null || !client.isAuthenticated()) {

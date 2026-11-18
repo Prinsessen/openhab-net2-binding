@@ -4,7 +4,14 @@ This binding connects openHAB to a Paxton Net2 access control server through the
 SignalR live events): door control, live door state, access logging, user management, building lockdown, and
 detection of an ACU that has started to refuse every user.
 
-## What is new in 5.2.4
+## What is new in 5.2.5
+
+- **Nothing keeps running after a JAR replace or a things-file reload.** A server handler disposed while it
+  was still connecting used to open a second SignalR connection and keep polling the doors every 10 minutes
+  ("tried updating the thing status although the handler was already disposed" in the log) until openHAB was
+  restarted. It now stops cleanly at any point of its start.
+
+## What was new in 5.2.4
 
 - **No false ACU lockout when the intruder alarm is set.** Net2 refuses a token with event 16/17 and sub type 82
   when the intruder alarm is set (the first presentation unsets the alarm through the alarm link, the next one
@@ -148,7 +155,7 @@ refusal.
 
 ## Resources
 
-- **Download JAR (v5.2.4):** [org.openhab.binding.net2-5.2.4.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.4/org.openhab.binding.net2-5.2.4.jar) (about 70 KB)
+- **Download JAR (v5.2.5):** [org.openhab.binding.net2-5.2.5.jar](https://github.com/Prinsessen/openhab-net2-binding/releases/download/v5.2.5/org.openhab.binding.net2-5.2.5.jar) (about 70 KB)
 - **Install:** copy the JAR into the openHAB `addons` folder (`/usr/share/openhab/addons/` on apt installs,
   `$OPENHAB_HOME/addons/` otherwise); it is picked up without a restart. Remove an older Net2 JAR first.
 - **Source code:** [github.com/Prinsessen/openhab-net2-binding](https://github.com/Prinsessen/openhab-net2-binding)
